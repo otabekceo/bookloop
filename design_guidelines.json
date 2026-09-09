@@ -1,0 +1,195 @@
+{
+  "app_name": "BookLoop",
+  "personality": "3 Editorial Mobile LIGHT",
+  "personality_one_liner": "A warm, editorial, and accessible local marketplace that feels like stepping into a cozy independent bookstore.",
+  "color": {
+    "surface": "#F7F4EE",
+    "onSurface": "#17211F",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#17211F",
+    "surfaceTertiary": "#F0ECE1",
+    "onSurfaceTertiary": "#17211F",
+    "surfaceInverse": "#17211F",
+    "onSurfaceInverse": "#F7F4EE",
+    "brand": "#D96C4A",
+    "brandPrimary": "#D96C4A",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#879B7A",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#F2E8E3",
+    "onBrandTertiary": "#D96C4A",
+    "success": "#879B7A",
+    "onSuccess": "#FFFFFF",
+    "warning": "#E8A365",
+    "onWarning": "#17211F",
+    "error": "#B33939",
+    "onError": "#FFFFFF",
+    "info": "#707775",
+    "onInfo": "#FFFFFF",
+    "border": "#E8E5E1",
+    "borderStrong": "#D6D1C9",
+    "divider": "#E8E5E1",
+    "muted": "#707775",
+    "onBrand": "#FFFFFF"
+  },
+  "typography": {
+    "displayFontFamily": "Fraunces",
+    "textFontFamily": "DM Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous editorial spacing. Use md to lg for component gaps, and xl or 2xl for page margins. Avoid cramped elements.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": false,
+    "do's": ["Use solid white or surface layers for elevation as per editorial design."],
+    "dont's": ["No heavy blur or glass effects. Keep it matte and grounded."]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-blur",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Auth / Onboarding",
+      "purpose": "Welcomes users with the cozy, indie-bookstore vibe and handles login.",
+      "states": {
+        "loading": "Spinner over faded background.",
+        "empty": "N/A",
+        "error": "Standard inline red error text for forms."
+      },
+      "layout": "Full-bleed background image of a cozy independent bookstore. A gradient scrim from transparent top to heavy surface at bottom. White overlay card holding the brand wordmark (in serif), tagline, and large Terracotta primary CTA. Clean form inputs below."
+    },
+    {
+      "name": "Discover",
+      "purpose": "Primary marketplace feed showing local people and books.",
+      "states": {
+        "loading": "Skeleton cards mimicking user rows and book tiles.",
+        "empty": "Illustration of vintage books with 'No active exchangers nearby'.",
+        "error": "Error message with a retry button."
+      },
+      "layout": "Top section: sticky search pill (Airbnb style) + segmented control (People / Books). If People: vertical list of wide cards. Each card shows avatar, name, distance, 'exchanging' sage dot, and a horizontal scroll of 3 mini book covers. If Books: 2-column masonry grid (Vinted style) of large book covers with crisp typography underneath."
+    },
+    {
+      "name": "Map",
+      "purpose": "Explore neighborhood-level book density and active swappers.",
+      "states": {
+        "loading": "Map loading state with central spinner.",
+        "empty": "N/A",
+        "error": "Location permission error with a settings CTA."
+      },
+      "layout": "Full-screen map. Custom markers (Sage bubbles) showing counts. Tapping a cluster triggers a Bottom Sheet (gorhom/bottom-sheet) revealing '342 people nearby' headline (serif), popular genre tags, and a 'Explore People' CTA. Map stays visible behind."
+    },
+    {
+      "name": "My Books",
+      "purpose": "Personal inventory management for exchanging.",
+      "states": {
+        "loading": "Skeleton grid.",
+        "empty": "Illustration of empty shelves and a primary 'Add your first book' CTA.",
+        "error": "Retry loading inventory."
+      },
+      "layout": "Editorial header (serif title). Sticky horizontal filter chips (Available, Reserved, Swapped). 2-column grid of user's books. Each item has a cover, title, and a subtle status tag (Sage for Available, muted for Swapped)."
+    },
+    {
+      "name": "Swaps",
+      "purpose": "Manage active, incoming, and completed exchange requests.",
+      "states": {
+        "loading": "Skeleton list of chat rows.",
+        "empty": "Graphic of two books swapping, 'No active swaps yet'.",
+        "error": "Retry fetching swaps."
+      },
+      "layout": "List layout of conversations. Each row shows avatar, name, requested book cover thumbnail, and last message. Inside chat: Standard message bubbles + distinct 'Swap Action Cards' (e.g., 'Maria proposed a swap', 'Accept', 'Decline') embedded in the chat timeline."
+    },
+    {
+      "name": "Profile",
+      "purpose": "View and edit personal details and swap history.",
+      "states": {
+        "loading": "Skeleton profile view.",
+        "empty": "N/A",
+        "error": "Error fetching profile."
+      },
+      "layout": "Large rounded avatar, name, location, and rating badge. 'Currently exchanging' toggle switch prominently placed. Below: sections for 'Interested Genres' (chips), 'Languages', and 'Swap History'. Clean, list-based layout."
+    },
+    {
+      "name": "Add Book Flow",
+      "purpose": "Quick, multi-step form to list a new book.",
+      "states": {
+        "loading": "Submitting state with spinner.",
+        "empty": "N/A",
+        "error": "Validation errors on inputs."
+      },
+      "layout": "A full-screen modal or sheet. Step 1: Upload cover photo (large square target). Step 2: Title & Author (large text fields). Step 3: Condition (radio buttons). Sticky 'Next/Submit' button anchored to the keyboard."
+    }
+  ],
+  "images": {
+    "auth_background": {
+      "url": "https://images.unsplash.com/photo-1518373714866-3f1478910cc0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njd8MHwxfHNlYXJjaHwxfHxjb3p5JTIwaW5kZXBlbmRlbnQlMjBib29rc3RvcmUlMjBpbnRlcmlvcnxlbnwwfHx8fDE3ODg5NjQyMDZ8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "cozy independent bookstore interior"
+    },
+    "user_avatar_female": {
+      "url": "https://images.unsplash.com/photo-1514355315815-2b64b0216b14?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzOTB8MHwxfHNlYXJjaHwxfHx5b3VuZyUyMGZlbWFsZSUyMHN0dWRlbnQlMjByZWFkZXIlMjBwb3J0cmFpdHxlbnwwfHx8fDE3ODg5NjQyMDZ8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "young female student reader portrait"
+    },
+    "user_avatar_male": {
+      "url": "https://images.unsplash.com/photo-1525457136159-8878648a7ad0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTV8MHwxfHNlYXJjaHwxfHxoYW5kc29tZSUyMG1hbGUlMjBzdHVkZW50JTIwc21pbGluZyUyMHBvcnRyYWl0fGVufDB8fHx8MTc4ODk2NDIxMnww&ixlib=rb-4.1.0&q=85",
+      "alt": "handsome male student smiling portrait"
+    },
+    "book_placeholder": {
+      "url": "https://images.unsplash.com/photo-1519764340700-3db40311f21e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzZ8MHwxfHNlYXJjaHwxfHxib29rJTIwY292ZXIlMjBpc29sYXRlZCUyMG9uJTIwd2hpdGV8ZW58MHx8fHwxNzg4OTY0MjEyfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "book cover isolated on white"
+    },
+    "empty_state_books": {
+      "url": "https://images.unsplash.com/photo-1529590003495-b2646e2718bf?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzd8MHwxfHNlYXJjaHwxfHxzdGFjayUyMG9mJTIwdmludGFnZSUyMGJvb2tzfGVufDB8fHx8MTc4ODk2NDIwNnww&ixlib=rb-4.1.0&q=85",
+      "alt": "stack of vintage books"
+    }
+  },
+  "haptics": {
+    "primary_button_press": "impactLight",
+    "tab_change": "selection",
+    "toggle_switch": "impactLight",
+    "add_book_success": "notificationSuccess",
+    "swap_request_sent": "notificationSuccess",
+    "pull_to_refresh": "impactLight"
+  },
+  "instructions_to_main_agent": [
+    "Design strictly for the '3 Editorial Mobile' personality: generous spacing, grounded matte surfaces (no heavy glassmorphism), and high typographic hierarchy.",
+    "Use Fraunces (serif) only for major headings (Auth, Screen Titles, Map Cluster Bottom Sheet headlines). Use DM Sans for everything else (body, labels, buttons).",
+    "The core background is Warm Paper (#F7F4EE). Use pure White (#FFFFFF) for cards and bottom sheets to create a crisp, editorial contrast.",
+    "Navigation: 5-item bottom tab bar. The middle item is a floating '+ Add Book' button. The active tab indicator should be Terracotta.",
+    "People Cards (Discover tab): Layout horizontally. Avatar, name, distance on top. A small 'exchanging' dot in Sage. Below that, a horizontal scrollview of 3 mini book covers they offer.",
+    "Book Grids: Use a 2-column masonry or grid layout (Vinted style) for books. The cover image is the hero; text underneath should be clean and readable.",
+    "For the Auth/Onboarding screen background, ensure a gradient scrim (transparent to surfaceInverse) is layered over the image so the white text and CTA pop perfectly.",
+    "Ensure all primary buttons (Terracotta) are pinned to the bottom of the screen with proper safe area padding, outside of the ScrollView.",
+    "Avoid any blue, purple, or indigo shades completely as per the no-tolerance color rule."
+  ]
+}
