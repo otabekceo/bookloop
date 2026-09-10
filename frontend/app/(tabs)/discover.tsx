@@ -4,9 +4,10 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from "@gorhom/bottom-sheet";
-import { MagnifyingGlass, SlidersHorizontal, Bell, CaretDown, BookOpen } from "phosphor-react-native";
+import { MagnifyingGlass, SlidersHorizontal, Bell, BookOpen } from "phosphor-react-native";
 
 import { AppText, Chip, ChipRow, Field, Button, EmptyState, haptic } from "@/src/components/ui";
+import { Logo } from "@/src/components/Logo";
 import { PersonCard, BookTile, Person, Book } from "@/src/components/cards";
 import { apiFetch } from "@/src/api";
 import { GENRES, LANGUAGES, DISTANCES } from "@/src/constants";
@@ -71,9 +72,7 @@ export default function Discover() {
     () => (
       <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
         <View style={styles.topRow}>
-          <AppText style={styles.wordmark}>
-            Book<AppText style={[styles.wordmark, { color: colors.brandSecondary }]}>Loop</AppText>
-          </AppText>
+          <Logo variant="wordmark" height={24} />
           <Pressable testID="notif-bell" onPress={() => router.push("/(tabs)/swaps")} style={styles.bell}>
             <Bell size={22} color={colors.onSurface} weight="regular" />
             {(notif?.total || 0) > 0 && <View style={styles.bellDot} />}

@@ -147,6 +147,7 @@ class BookBody(BaseModel):
     language: str = "English"
     genre: str = "Fiction"
     status: str = "Available"
+    isbn: Optional[str] = None
 
 
 class SwapCreate(BaseModel):
@@ -160,7 +161,8 @@ class ProposeBody(BaseModel):
 
 
 class MessageBody(BaseModel):
-    text: str
+    text: str = ""
+    image_url: Optional[str] = None
 
 
 class RateBody(BaseModel):
@@ -204,6 +206,7 @@ def clean_book(b: dict) -> dict:
         "language": b.get("language", "English"),
         "genre": b.get("genre", "Fiction"),
         "status": b.get("status", "Available"),
+        "isbn": b.get("isbn"),
     }
 
 
@@ -407,6 +410,7 @@ async def add_book(body: BookBody, user: dict = Depends(get_current_user)):
         "condition": body.condition,
         "language": body.language,
         "genre": body.genre,
+        "isbn": body.isbn,
         "status": body.status if body.status in ("Available", "Reserved", "Swapped") else "Available",
         "created_at": now_utc(),
         "deleted_at": None,
@@ -436,6 +440,69 @@ async def get_book(book_id: str, user: dict = Depends(get_current_user)):
     if owner:
         ownerp["distance_km"] = haversine_km(user.get("lat"), user.get("lng"), owner.get("lat"), owner.get("lng"))
     return {"book": clean_book(b), "owner": ownerp, "is_owner": b["owner_id"] == user["user_id"]}
+
+
+LANG_CODE_MAP = {
+    "eng": "English", "ita": "Italian", "spa": "Spanish", "fre": "French",
+    "fra": "French", "ger": "German", "deu": "German", "ara": "Arabic", "por": "Portuguese",
+}
+
+
+def _ol_cover(cover_i, isbn_list):
+    if cover_i:
+        return f"https://covers.openlibrary.org/b/id/{cover_i}-M.jpg"
+    if isbn_list:
+        return f"https://covers.openlibrary.org/b/isbn/{isbn_list[0]}-M.jpg"
+    return None
+
+
+@api.get("/books/search")
+async def book_search(q: str, user: dict = Depends(get_current_user)):
+    if not q or len(q.strip()) < 2:
+        return {"results": []}
+    url = "https://openlibrary.org/search.json"
+    params = {"q": q, "limit": 20, "fields": "title,author_name,isbn,cover_i,language"}
+    try:
+        async with httpx.AsyncClient(timeout=12) as hc:
+            resp = await hc.get(url, params=params, headers={"User-Agent": "BookLoop/1.0"})
+        docs = resp.json().get("docs", []) if resp.status_code == 200 else []
+    except Exception:
+        docs = []
+    results = []
+    for d in docs:
+        isbns = d.get("isbn") or []
+        langs = d.get("language") or []
+        results.append({
+            "title": d.get("title", "Untitled"),
+            "author": ", ".join((d.get("author_name") or [])[:2]),
+            "cover_url": _ol_cover(d.get("cover_i"), isbns),
+            "isbn": isbns[0] if isbns else None,
+            "language": LANG_CODE_MAP.get(langs[0], "English") if langs else "English",
+        })
+    return {"results": results}
+
+
+@api.get("/books/isbn/{isbn}")
+async def book_isbn(isbn: str, user: dict = Depends(get_current_user)):
+    url = "https://openlibrary.org/search.json"
+    try:
+        async with httpx.AsyncClient(timeout=12) as hc:
+            resp = await hc.get(url, params={"isbn": isbn, "fields": "title,author_name,isbn,cover_i,language"}, headers={"User-Agent": "BookLoop/1.0"})
+        docs = resp.json().get("docs", []) if resp.status_code == 200 else []
+    except Exception:
+        docs = []
+    if not docs:
+        return {"result": {"title": "", "author": "", "isbn": isbn, "language": "English", "cover_url": f"https://covers.openlibrary.org/b/isbn/{isbn}-M.jpg"}}
+    d = docs[0]
+    isbns = d.get("isbn") or [isbn]
+    langs = d.get("language") or []
+    return {"result": {
+        "title": d.get("title", ""),
+        "author": ", ".join((d.get("author_name") or [])[:2]),
+        "cover_url": _ol_cover(d.get("cover_i"), isbns),
+        "isbn": isbn,
+        "language": LANG_CODE_MAP.get(langs[0], "English") if langs else "English",
+    }}
 
 
 @api.delete("/books/{book_id}")
@@ -569,7 +636,7 @@ async def map_clusters(user: dict = Depends(get_current_user)):
 # ----------------------------------------------------------------------------
 # Swaps
 # ----------------------------------------------------------------------------
-async def _add_message(swap_id: str, sender_id: Optional[str], mtype: str, text: str = "", proposal: dict = None):
+async def _add_message(swap_id: str, sender_id: Optional[str], mtype: str, text: str = "", proposal: dict = None, image_url: str = None):
     msg = {
         "id": new_id("msg"),
         "swap_id": swap_id,
@@ -577,10 +644,12 @@ async def _add_message(swap_id: str, sender_id: Optional[str], mtype: str, text:
         "type": mtype,
         "text": text,
         "proposal": proposal,
+        "image_url": image_url,
         "created_at": now_utc(),
     }
     await db.messages.insert_one(dict(msg))
-    await db.swaps.update_one({"id": swap_id}, {"$set": {"updated_at": now_utc(), "last_message": text or mtype}})
+    label = "📷 Photo" if mtype == "image" else (text or mtype)
+    await db.swaps.update_one({"id": swap_id}, {"$set": {"updated_at": now_utc(), "last_message": label}})
     return msg
 
 
@@ -695,7 +764,10 @@ async def send_message(swap_id: str, body: MessageBody, user: dict = Depends(get
     s = await db.swaps.find_one({"id": swap_id})
     if not s or user["user_id"] not in (s["requester_id"], s["receiver_id"]):
         raise HTTPException(status_code=404, detail="Swap not found")
-    msg = await _add_message(swap_id, user["user_id"], "text", body.text)
+    if not body.text.strip() and not body.image_url:
+        raise HTTPException(status_code=400, detail="Empty message")
+    mtype = "image" if body.image_url else "text"
+    msg = await _add_message(swap_id, user["user_id"], mtype, body.text, image_url=body.image_url)
     msg["created_at"] = msg["created_at"].isoformat()
     return {"message": msg}
 

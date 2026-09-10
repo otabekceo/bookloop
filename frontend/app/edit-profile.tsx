@@ -1,15 +1,15 @@
 import { useState } from "react";
-import { View, Pressable, ActivityIndicator, Linking } from "react-native";
+import { View, Pressable, ActivityIndicator, Platform } from "react-native";
 import { useRouter, Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useQueryClient } from "@tanstack/react-query";
-import * as ImagePicker from "expo-image-picker";
-import { X, Camera } from "phosphor-react-native";
+import { X, Camera, Image as ImageIcon } from "phosphor-react-native";
 
 import { AppText, Avatar, Button, Field, Chip, haptic, useToast } from "@/src/components/ui";
 import { useAuth } from "@/src/auth";
-import { apiFetch, uploadImage } from "@/src/api";
+import { apiFetch } from "@/src/api";
+import { pickImage, uploadWithProgress, openSettings } from "@/src/media";
 import { GENRES, LANGUAGES } from "@/src/constants";
 import { makeStyles, useTheme } from "@/src/theme";
 
@@ -45,26 +45,18 @@ export default function EditProfile() {
     set(arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
   };
 
-  const pickAvatar = async () => {
-    haptic("light");
-    const perm = await ImagePicker.getMediaLibraryPermissionsAsync();
-    let status = perm.status;
-    if (status !== "granted") {
-      if (perm.canAskAgain) status = (await ImagePicker.requestMediaLibraryPermissionsAsync()).status;
-      if (status !== "granted") {
-        toast("Enable photo access in Settings", "error");
-        if (!perm.canAskAgain) Linking.openSettings();
-        return;
-      }
-    }
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsEditing: true, aspect: [1, 1], quality: 0.7 });
-    if (res.canceled || !res.assets?.[0]) return;
+  const pickAvatar = async (source: "library" | "camera") => {
+    const picked = await pickImage(source, (blocked) => {
+      toast(blocked ? "Enable photo access in Settings" : "Permission needed", "error");
+      if (blocked) openSettings();
+    });
+    if (!picked) return;
     setUploading(true);
     try {
-      const up = await uploadImage(res.assets[0].uri);
+      const up = await uploadWithProgress(picked.uri);
       setAvatar(up.url);
-    } catch {
-      toast("Upload failed", "error");
+    } catch (e: any) {
+      toast(e.message || "Upload failed", "error");
     } finally {
       setUploading(false);
     }
@@ -102,13 +94,25 @@ export default function EditProfile() {
       </View>
 
       <KeyboardAwareScrollView contentContainerStyle={{ padding: 20, gap: 18, paddingBottom: 40 }} bottomOffset={90} showsVerticalScrollIndicator={false}>
-        <View style={{ alignItems: "center" }}>
-          <Pressable testID="pick-avatar" onPress={pickAvatar} style={styles.avatarWrap}>
+        <View style={{ alignItems: "center", gap: 10 }}>
+          <Pressable testID="pick-avatar" onPress={() => pickAvatar("library")} style={styles.avatarWrap}>
             {uploading ? <ActivityIndicator color={colors.brandPrimary} /> : <Avatar uri={avatar} name={name} size={96} />}
             <View style={styles.camBadge}>
               <Camera size={16} color={colors.onBrandPrimary} weight="fill" />
             </View>
           </Pressable>
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <Pressable testID="avatar-gallery" onPress={() => pickAvatar("library")} style={styles.smallBtn}>
+              <ImageIcon size={16} color={colors.onSurface} />
+              <AppText variant="label">Gallery</AppText>
+            </Pressable>
+            {Platform.OS !== "web" && (
+              <Pressable testID="avatar-camera" onPress={() => pickAvatar("camera")} style={styles.smallBtn}>
+                <Camera size={16} color={colors.onSurface} />
+                <AppText variant="label">Camera</AppText>
+              </Pressable>
+            )}
+          </View>
         </View>
 
         <Field testID="edit-name" label="Name" value={name} onChangeText={setName} onSurface />
@@ -152,6 +156,7 @@ const useStyles = makeStyles((colors) => ({
   topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: colors.border },
   iconBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   avatarWrap: { width: 96, height: 96 },
+  smallBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12 },
   camBadge: { position: "absolute", bottom: 0, right: 0, width: 30, height: 30, borderRadius: 15, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: colors.surface },
   wrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
 }));

@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import Animated, { FadeInDown, FadeOutUp } from "react-native-reanimated";
+import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { BookOpen, Star } from "phosphor-react-native";
 
@@ -269,46 +270,78 @@ export function RatingPill({ rating, count }: { rating: number; count?: number }
 }
 
 // ---------------------------------------------------------------------------
-// BookCover
+// BookCover (with generated placeholder + remote error fallback)
 // ---------------------------------------------------------------------------
+const COVER_PALETTES: [string, string][] = [
+  ["#879B7A", "#6E8368"], // sage
+  ["#D96C4A", "#C0552F"], // terracotta
+  ["#17211F", "#2C3D39"], // ink
+  ["#4A6D8C", "#375169"], // blue
+  ["#B08968", "#8C6A4E"], // beige/brown
+  ["#9C4A4A", "#7E3838"], // red
+  ["#5B7A6B", "#456051"], // deep green
+];
+
+function paletteFor(seed: string): [string, string] {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) & 0xffff;
+  return COVER_PALETTES[h % COVER_PALETTES.length];
+}
+
 export function BookCover({
   uri,
   width,
+  title,
   style,
 }: {
   uri?: string | null;
   width: number;
+  title?: string;
   style?: StyleProp<ViewStyle>;
 }) {
-  const { colors } = useTheme();
+  const [failed, setFailed] = useState(false);
   const src = resolveImage(uri);
   const height = width * 1.5;
-  if (src) {
+
+  if (src && !failed) {
     return (
       <Image
         source={{ uri: src }}
-        style={[{ width, height, borderRadius: 8, backgroundColor: colors.surfaceTertiary }, style]}
+        style={[{ width, height, borderRadius: 8, backgroundColor: "#00000010" }, style]}
         contentFit="cover"
         transition={200}
+        onError={() => setFailed(true)}
       />
     );
   }
+
+  const [c1, c2] = paletteFor(title || uri || "book");
+  const showTitle = width >= 70 && !!title;
   return (
-    <View
+    <LinearGradient
+      colors={[c1, c2]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
       style={[
-        {
-          width,
-          height,
-          borderRadius: 8,
-          backgroundColor: colors.surfaceTertiary,
-          alignItems: "center",
-          justifyContent: "center",
-        },
+        { width, height, borderRadius: 8, padding: width * 0.1, justifyContent: "space-between", overflow: "hidden" },
         style,
       ]}
     >
-      <BookOpen size={width * 0.4} color={colors.muted} weight="light" />
-    </View>
+      {showTitle ? (
+        <Text
+          numberOfLines={4}
+          style={{ color: "#FFFFFF", fontFamily: FONTS.displaySemi, fontSize: Math.max(11, width * 0.11), lineHeight: Math.max(14, width * 0.14) }}
+        >
+          {title}
+        </Text>
+      ) : (
+        <BookOpen size={width * 0.32} color="rgba(255,255,255,0.85)" weight="light" />
+      )}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 3, opacity: 0.85 }}>
+        <View style={{ width: width * 0.09, height: width * 0.09, borderRadius: width * 0.045, borderWidth: 1.5, borderColor: "#FFFFFF" }} />
+        <View style={{ width: width * 0.09, height: width * 0.09, borderRadius: width * 0.045, borderWidth: 1.5, borderColor: "#FFFFFF" }} />
+      </View>
+    </LinearGradient>
   );
 }
 

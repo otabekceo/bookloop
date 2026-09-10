@@ -22,8 +22,22 @@ Discover people → explore their books → request a general swap → chat → 
 - General swap request → in-swap chat → specific book proposal → accept/decline → complete (both) → rate.
 - Ratings recompute profile rating & swaps count.
 
-## Implemented (2026-06-09)
-- ✅ Email/password + Google auth, session persistence, root-layout auth gate.
+## Iteration 2 — fixes & features (2026-06-10)
+- ✅ Official BookLoop logo (processed transparent PNG) on auth card + Discover header (`src/components/Logo.tsx`).
+- ✅ Invite Friends on Profile: native Share + copy invite link (`?ref={user_id}`).
+- ✅ Fast Add Book: Search (OpenLibrary proxy `/api/books/search`) + Barcode scan (expo-camera `/book/scan` → `/api/books/isbn/{isbn}`) + Manual, with autofill of title/author/cover/isbn/language.
+- ✅ Robust photo upload: XHR `uploadWithProgress` (progress + real errors), Gallery + Camera sources, permission handling. Wired into Add Book cover, Edit Profile avatar, and chat photos.
+- ✅ Generated placeholder covers (colored gradient + title) so a book never shows a broken image; remote-image error fallback in `BookCover`.
+- ✅ Chat photos: `POST /swaps/{id}/messages {image_url}` + image bubbles.
+- ✅ Reviews on profiles: tappable summary (avg + count) → full `/reviews/{id}` list with reviewer, stars, text, date.
+- ✅ Map rebuilt as a real interactive Leaflet/OpenStreetMap map (pan/pinch/zoom) with sage neighbourhood count markers → cluster bottom sheet; web uses an iframe, native uses react-native-webview.
+- ✅ Books now carry an `isbn` field. Verified: 43/43 backend tests + frontend flows.
+
+## Notes / known limits
+- Barcode scanning & camera capture require a real device (not testable in web preview / Expo Go simulator screenshot).
+- OpenLibrary is proxied server-side to avoid the client-side Google Books 429 rate limits seen on shared IPs.
+
+## Implemented (2026-06-09)- ✅ Email/password + Google auth, session persistence, root-layout auth gate.
 - ✅ Discover (People/Books segment, search, filter bottom sheet: distance/language/exchanging, genre chip row).
 - ✅ Map screen with lat/lng-positioned Sage cluster markers, density headline, cluster bottom sheet + Explore People.
 - ✅ My Books grid with Available/Reserved/Swapped filter chips; Add Book modal (manual entry + cover upload to object storage); edit/soft-delete.

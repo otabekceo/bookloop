@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { View, ScrollView, Pressable, useWindowDimensions } from "react-native";
+import { View, ScrollView, Pressable, useWindowDimensions, Share } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
-import { MapPin, PencilSimple, SignOut, Books as BooksIcon, Star } from "phosphor-react-native";
+import * as Clipboard from "expo-clipboard";
+import { MapPin, PencilSimple, SignOut, UserPlus, Copy, ShareNetwork } from "phosphor-react-native";
 
 import { AppText, Avatar, Button, RatingPill, haptic, useToast } from "@/src/components/ui";
 import { BookTile, Book } from "@/src/components/cards";
@@ -39,8 +40,7 @@ export default function Profile() {
   if (!user) return null;
   const books = (booksData?.books || []).slice(0, 4);
 
-  const toggleExchanging = async () => {
-    haptic("light");
+  const toggleExchanging = async () => {    haptic("light");
     setSaving(true);
     try {
       const next = !user.is_exchanging;
@@ -54,6 +54,22 @@ export default function Profile() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const inviteLink = `${process.env.EXPO_PUBLIC_BACKEND_URL}?ref=${user.user_id}`;
+  const inviteMessage = `📚 Join me on BookLoop — discover readers near you and swap books locally. Bring your reading group into your local loop!\n\n${inviteLink}`;
+
+  const shareInvite = async () => {
+    haptic("light");
+    try {
+      await Share.share({ message: inviteMessage });
+    } catch {}
+  };
+
+  const copyInvite = async () => {
+    haptic("selection");
+    await Clipboard.setStringAsync(inviteLink);
+    toast("Invite link copied", "success");
   };
 
   return (
@@ -125,6 +141,28 @@ export default function Profile() {
           <View style={[styles.knob, user.is_exchanging && styles.knobOn]} />
         </View>
       </Pressable>
+
+      {/* Invite friends */}
+      <View style={styles.inviteCard}>
+        <View style={styles.inviteIcon}>
+          <UserPlus size={22} color={colors.onBrandSecondary} weight="fill" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <AppText variant="heading">Invite friends</AppText>
+          <AppText variant="caption" color={colors.muted}>
+            Bring your reading group into your local loop
+          </AppText>
+        </View>
+      </View>
+      <View style={styles.inviteBtnRow}>
+        <Pressable testID="share-invite" onPress={shareInvite} style={styles.inviteShare}>
+          <ShareNetwork size={18} color={colors.onBrandPrimary} weight="fill" />
+          <AppText variant="button" color={colors.onBrandPrimary}>Share invite</AppText>
+        </Pressable>
+        <Pressable testID="copy-invite" onPress={copyInvite} style={styles.inviteCopy}>
+          <Copy size={18} color={colors.onSurface} />
+        </Pressable>
+      </View>
 
       {/* Genres */}
       <Section title="Interested in">
@@ -209,6 +247,11 @@ const useStyles = makeStyles((colors) => ({
   knob: { width: 24, height: 24, borderRadius: 12, backgroundColor: "#FFFFFF" },
   knobOn: { alignSelf: "flex-end" },
   section: { marginHorizontal: 20, marginTop: 24, gap: 12 },
+  inviteCard: { flexDirection: "row", alignItems: "center", gap: 14, marginHorizontal: 20, marginTop: 16, backgroundColor: colors.sageSoft, borderRadius: 18, padding: 16 },
+  inviteIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brandSecondary, alignItems: "center", justifyContent: "center" },
+  inviteBtnRow: { flexDirection: "row", gap: 10, marginHorizontal: 20, marginTop: 10 },
+  inviteShare: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: colors.brandPrimary, borderRadius: 14, height: 50 },
+  inviteCopy: { width: 50, height: 50, borderRadius: 14, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   tagWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   tag: { backgroundColor: colors.brandTertiary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },

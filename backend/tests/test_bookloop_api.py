@@ -308,6 +308,116 @@ class TestSwapFlow:
         assert r2.status_code == 400
 
 
+# ------------------------------------------------------------------ BOOK SEARCH (OpenLibrary proxy)
+class TestBookSearch:
+    def test_search_requires_auth(self):
+        r = requests.get(f"{API}/books/search", params={"q": "atomic habits"})
+        assert r.status_code == 401
+
+    def test_search_returns_results(self, user_a):
+        r = requests.get(f"{API}/books/search", params={"q": "atomic habits"}, headers=_h(user_a["token"]))
+        assert r.status_code == 200
+        d = r.json()
+        assert "results" in d
+        assert isinstance(d["results"], list)
+        # OpenLibrary is external; only assert shape if non-empty
+        if d["results"]:
+            item = d["results"][0]
+            for k in ("title", "author", "cover_url", "isbn", "language"):
+                assert k in item
+
+    def test_search_too_short(self, user_a):
+        r = requests.get(f"{API}/books/search", params={"q": "a"}, headers=_h(user_a["token"]))
+        assert r.status_code == 200
+        assert r.json()["results"] == []
+
+    def test_isbn_lookup(self, user_a):
+        r = requests.get(f"{API}/books/isbn/9780735211292", headers=_h(user_a["token"]))
+        assert r.status_code == 200
+        res = r.json()["result"]
+        for k in ("title", "author", "isbn", "language", "cover_url"):
+            assert k in res
+        assert res["isbn"] == "9780735211292"
+
+    def test_isbn_unknown_fallback(self, user_a):
+        # Even unknown ISBN returns 200 with a shell result (cover_url built from ISBN)
+        r = requests.get(f"{API}/books/isbn/0000000000000", headers=_h(user_a["token"]))
+        assert r.status_code == 200
+        res = r.json()["result"]
+        assert res["isbn"] == "0000000000000"
+        assert "cover_url" in res
+
+
+# ------------------------------------------------------------------ CHAT IMAGE MESSAGES
+class TestChatImage:
+    state = {}
+
+    def test_setup_swap(self, user_a, user_b):
+        r = requests.post(f"{API}/swaps", json={"receiver_id": user_b["user"]["user_id"], "message": "Hi again!"},
+                          headers=_h(user_a["token"]))
+        assert r.status_code == 200
+        TestChatImage.state["sid"] = r.json()["swap"]["id"]
+
+    def test_empty_message_rejected(self, user_a):
+        sid = TestChatImage.state["sid"]
+        r = requests.post(f"{API}/swaps/{sid}/messages", json={"text": ""}, headers=_h(user_a["token"]))
+        assert r.status_code == 400
+
+    def test_image_message_created(self, user_a):
+        sid = TestChatImage.state["sid"]
+        img = "/api/files/dummy/path.png"
+        r = requests.post(f"{API}/swaps/{sid}/messages",
+                          json={"text": "", "image_url": img},
+                          headers=_h(user_a["token"]))
+        assert r.status_code == 200, r.text
+        m = r.json()["message"]
+        assert m["image_url"] == img
+        assert m["type"] == "image"
+
+    def test_image_message_visible_in_detail(self, user_a):
+        sid = TestChatImage.state["sid"]
+        r = requests.get(f"{API}/swaps/{sid}", headers=_h(user_a["token"]))
+        assert r.status_code == 200
+        msgs = r.json()["messages"]
+        img_msgs = [m for m in msgs if m.get("image_url")]
+        assert len(img_msgs) >= 1
+        assert img_msgs[-1]["type"] == "image"
+
+
+# ------------------------------------------------------------------ USER REVIEWS PAYLOAD
+class TestUserReviews:
+    def test_reviews_shape(self, user_a):
+        """Self-contained: create user_c, run a mini swap A<->C, complete + rate C, verify /users/{c} returns reviews."""
+        email = f"TEST_rev_{uuid.uuid4().hex[:8]}@bookloop.com"
+        rc = requests.post(f"{API}/auth/register", json={"email": email, "password": "test1234", "name": "TEST Reviewee"})
+        assert rc.status_code == 200
+        uc = rc.json()
+        tc, ucid = uc["session_token"], uc["user"]["user_id"]
+        # give each side a book
+        ba = requests.post(f"{API}/books", json={"title": "TEST Rev Book A", "author": "x"}, headers=_h(user_a["token"])).json()["book"]["id"]
+        bc = requests.post(f"{API}/books", json={"title": "TEST Rev Book C", "author": "x"}, headers=_h(tc)).json()["book"]["id"]
+        # A requests swap with C
+        sid = requests.post(f"{API}/swaps", json={"receiver_id": ucid, "message": "hi"}, headers=_h(user_a["token"])).json()["swap"]["id"]
+        requests.post(f"{API}/swaps/{sid}/propose", json={"offered_book_id": ba, "requested_book_id": bc}, headers=_h(user_a["token"]))
+        requests.post(f"{API}/swaps/{sid}/accept", headers=_h(tc))
+        requests.post(f"{API}/swaps/{sid}/complete", headers=_h(user_a["token"]))
+        requests.post(f"{API}/swaps/{sid}/complete", headers=_h(tc))
+        rr = requests.post(f"{API}/swaps/{sid}/rate", json={"stars": 5, "review": "Amazing swap"}, headers=_h(user_a["token"]))
+        assert rr.status_code == 200, rr.text
+        # Now hit the user endpoint
+        r = requests.get(f"{API}/users/{ucid}", headers=_h(user_a["token"]))
+        assert r.status_code == 200
+        u = r.json()["user"]
+        assert "rating" in u and "rating_count" in u
+        assert u["rating_count"] >= 1
+        reviews = r.json()["reviews"]
+        assert isinstance(reviews, list) and len(reviews) >= 1
+        rev = reviews[0]
+        for k in ("stars", "created_at", "rater_name"):
+            assert k in rev
+        assert rev["stars"] == 5
+
+
 # ------------------------------------------------------------------ NOTIFICATIONS
 class TestNotifications:
     def test_notifications(self, user_b):

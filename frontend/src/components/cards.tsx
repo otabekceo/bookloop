@@ -130,7 +130,7 @@ export function BookTile({
       }}
       style={{ width, gap: 8 }}
     >
-      <BookCover uri={book.cover_url} width={width} />
+      <BookCover uri={book.cover_url} width={width} title={book.title} />
       <View style={{ gap: 3 }}>
         <AppText variant="label" numberOfLines={1}>
           {book.title}

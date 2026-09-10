@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { GoogleLogo } from "phosphor-react-native";
 
 import { AppText, Button, Field, useToast, haptic } from "@/src/components/ui";
+import { Logo } from "@/src/components/Logo";
 import { useAuth } from "@/src/auth";
 import { makeStyles, useTheme } from "@/src/theme";
 import { FONTS } from "@/src/typography";
@@ -68,15 +69,15 @@ export default function Login() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.brandWrap}>
-          <AppText color="#FFFFFF" style={styles.wordmark}>
-            Book<AppText style={[styles.wordmark, { color: colors.brandSecondary }]}>Loop</AppText>
-          </AppText>
-          <AppText variant="label" color="#F7F4EE" style={{ letterSpacing: 0.5 }}>
-            Read. Swap. Repeat.
+          <AppText color="#FFFFFF" style={styles.tagOverImage}>
+            Discover · Exchange · Read
           </AppText>
         </View>
 
         <View style={styles.card}>
+          <View style={{ alignItems: "center", marginBottom: 18 }}>
+            <Logo variant="full" height={64} />
+          </View>
           <AppText variant="title" style={{ marginBottom: 4 }}>
             {mode === "login" ? "Welcome back" : "Join the loop"}
           </AppText>
@@ -166,8 +167,8 @@ const useStyles = makeStyles((colors) => ({
   scrim: { flex: 1 },
   scroll: { flex: 1 },
   content: { paddingHorizontal: 20 },
-  brandWrap: { alignItems: "center", marginBottom: 28, gap: 6 },
-  wordmark: { fontFamily: FONTS.display, fontSize: 40, lineHeight: 46 },
+  brandWrap: { alignItems: "center", marginBottom: 20 },
+  tagOverImage: { fontFamily: FONTS.medium, fontSize: 15, letterSpacing: 1, textShadowColor: "rgba(0,0,0,0.3)", textShadowRadius: 6 },
   card: {
     backgroundColor: colors.surfaceSecondary,
     borderRadius: 24,

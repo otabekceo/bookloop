@@ -5,10 +5,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from "@gorhom/bottom-sheet";
-import { ArrowLeft, PaperPlaneRight, ArrowsClockwise, Star, CheckCircle, X } from "phosphor-react-native";
+import { Image } from "expo-image";
+import { ArrowLeft, PaperPlaneRight, ArrowsClockwise, Star, CheckCircle, X, ImageSquare } from "phosphor-react-native";
 
 import { AppText, Avatar, Button, BookCover, Stars, haptic, useToast } from "@/src/components/ui";
-import { apiFetch } from "@/src/api";
+import { apiFetch, resolveImage } from "@/src/api";
+import { pickImage, uploadWithProgress, openSettings } from "@/src/media";
 import { useAuth } from "@/src/auth";
 import { makeStyles, useTheme } from "@/src/theme";
 
@@ -59,6 +61,20 @@ export default function SwapChat() {
     if (!t) return;
     setText("");
     await act(() => apiFetch(`/api/swaps/${id}/messages`, { method: "POST", body: { text: t } }));
+  };
+
+  const sendImage = async () => {
+    const picked = await pickImage("library", (blocked) => {
+      toast(blocked ? "Enable photo access in Settings" : "Permission needed", "error");
+      if (blocked) openSettings();
+    });
+    if (!picked) return;
+    try {
+      const up = await uploadWithProgress(picked.uri);
+      await act(() => apiFetch(`/api/swaps/${id}/messages`, { method: "POST", body: { image_url: up.url } }), "success");
+    } catch (e: any) {
+      toast(e.message || "Could not send photo", "error");
+    }
   };
 
   const backdrop = useCallback(
@@ -121,6 +137,20 @@ export default function SwapChat() {
       );
     }
     const mine = item.sender_id === myId;
+    if (item.type === "image") {
+      return (
+        <View style={[styles.bubbleRow, { justifyContent: mine ? "flex-end" : "flex-start" }]}>
+          <View style={[styles.imageBubble, mine ? { borderBottomRightRadius: 4 } : { borderBottomLeftRadius: 4 }]}>
+            <Image source={{ uri: resolveImage(item.image_url) }} style={styles.chatImage} contentFit="cover" transition={200} />
+            {item.text ? (
+              <AppText variant="body" color={colors.onSurface} style={{ marginTop: 6 }}>
+                {item.text}
+              </AppText>
+            ) : null}
+          </View>
+        </View>
+      );
+    }
     return (
       <View style={[styles.bubbleRow, { justifyContent: mine ? "flex-end" : "flex-start" }]}>
         <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
@@ -238,6 +268,9 @@ export default function SwapChat() {
 
           {showInput && (
             <View style={[styles.inputRow, { paddingBottom: insets.bottom > 0 ? insets.bottom : 10 }]}>
+              <Pressable testID="attach-image" onPress={sendImage} style={styles.attachBtn}>
+                <ImageSquare size={22} color={colors.brandPrimary} weight="regular" />
+              </Pressable>
               <TextInput
                 testID="message-input"
                 value={text}
@@ -343,6 +376,9 @@ const useStyles = makeStyles((colors) => ({
   actionArea: { paddingHorizontal: 16, paddingTop: 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 },
   doneRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 6 },
   inputRow: { flexDirection: "row", alignItems: "flex-end", gap: 8, paddingTop: 4 },
+  attachBtn: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceTertiary },
+  imageBubble: { maxWidth: "72%", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: 18, padding: 6 },
+  chatImage: { width: 200, height: 200, borderRadius: 14, backgroundColor: colors.surfaceTertiary },
   input: { flex: 1, backgroundColor: colors.surfaceTertiary, borderRadius: 20, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10, maxHeight: 100, color: colors.onSurface, fontFamily: "DMSans-Regular", fontSize: 15 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" },
   pick: { alignItems: "center", gap: 4, padding: 6, borderRadius: 12, borderWidth: 2, borderColor: "transparent" },

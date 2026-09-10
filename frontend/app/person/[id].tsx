@@ -3,7 +3,7 @@ import { View, ScrollView, Pressable, ActivityIndicator, useWindowDimensions } f
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, MapPin, ArrowsClockwise } from "phosphor-react-native";
+import { ArrowLeft, MapPin, ArrowsClockwise, ArrowRight } from "phosphor-react-native";
 
 import { AppText, Avatar, Button, Stars, RatingPill, ExchangingDot, EmptyState, haptic, useToast } from "@/src/components/ui";
 import { BookTile, Book } from "@/src/components/cards";
@@ -112,26 +112,39 @@ export default function PersonProfile() {
               </AppText>
             )}
 
-            {data.reviews.length > 0 && (
-              <>
-                <AppText variant="heading" style={{ marginTop: 28, marginBottom: 12 }}>
-                  Reviews
-                </AppText>
-                <View style={{ gap: 12 }}>
-                  {data.reviews.map((r: any) => (
-                    <View key={r.id} style={styles.review}>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                        <Avatar uri={r.rater_avatar} name={r.rater_name} size={32} />
-                        <AppText variant="label">{r.rater_name}</AppText>
-                        <View style={{ marginLeft: "auto" }}>
-                          <Stars value={r.stars} />
-                        </View>
+            <Pressable
+              testID="reviews-summary"
+              onPress={() => router.push(`/reviews/${id}`)}
+              style={styles.reviewsHead}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <AppText variant="heading">Reviews</AppText>
+                <RatingPill rating={data.user.rating} count={data.user.rating_count} />
+              </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                <AppText variant="label" color={colors.brandPrimary}>See all</AppText>
+                <ArrowRight size={16} color={colors.brandPrimary} weight="bold" />
+              </View>
+            </Pressable>
+            {data.reviews.length > 0 ? (
+              <View style={{ gap: 12, marginTop: 12 }}>
+                {data.reviews.slice(0, 2).map((r: any) => (
+                  <View key={r.id} style={styles.review}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <Avatar uri={r.rater_avatar} name={r.rater_name} size={32} />
+                      <AppText variant="label">{r.rater_name}</AppText>
+                      <View style={{ marginLeft: "auto" }}>
+                        <Stars value={r.stars} />
                       </View>
-                      {r.review ? <AppText variant="body" color={colors.muted}>{r.review}</AppText> : null}
                     </View>
-                  ))}
-                </View>
-              </>
+                    {r.review ? <AppText variant="body" color={colors.muted}>{r.review}</AppText> : null}
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <AppText variant="body" color={colors.muted} style={{ marginTop: 8 }}>
+                No reviews yet — be the first to swap with {data.user.name?.split(" ")[0]}.
+              </AppText>
             )}
           </ScrollView>
 
@@ -157,5 +170,6 @@ const useStyles = makeStyles((colors) => ({
   tagWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 16 },
   tag: { backgroundColor: colors.brandTertiary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },
   review: { backgroundColor: colors.surfaceSecondary, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.border },
+  reviewsHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 28 },
   footer: { position: "absolute", bottom: 0, left: 0, right: 0, paddingHorizontal: 20, paddingTop: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
 }));

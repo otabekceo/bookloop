@@ -11,7 +11,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.emergent.booklooppreview.kh5mx8",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Add book covers and profile photos"
+        "NSPhotoLibraryUsageDescription": "Add book covers and profile photos",
+        "NSCameraUsageDescription": "Scan book barcodes and take cover photos"
       }
     },
     "android": {
@@ -20,7 +21,7 @@
         "backgroundColor": "#F7F4EE"
       },
       "package": "com.emergent.booklooppreview.kh5mx8",
-      "permissions": ["READ_MEDIA_IMAGES"]
+      "permissions": ["READ_MEDIA_IMAGES", "CAMERA"]
     },
     "web": {
       "bundler": "metro",
@@ -42,6 +43,12 @@
         "expo-image-picker",
         {
           "photosPermission": "Add book covers and profile photos"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan book barcodes and take cover photos"
         }
       ],
       "expo-font",
