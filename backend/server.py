@@ -134,6 +134,7 @@ class ProfileUpdate(BaseModel):
     avatar_url: Optional[str] = None
     genres: Optional[List[str]] = None
     languages: Optional[List[str]] = None
+    reading_interests: Optional[List[str]] = None
     is_exchanging: Optional[bool] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
@@ -173,10 +174,51 @@ class RateBody(BaseModel):
 # ----------------------------------------------------------------------------
 # Serialization helpers
 # ----------------------------------------------------------------------------
+# Swap streak badges — friendly milestones for completed swaps.
+BADGES = [
+    {"id": "first_loop", "label": "First Loop", "threshold": 1, "blurb": "Completed your first swap"},
+    {"id": "regular", "label": "Loop Regular", "threshold": 3, "blurb": "3 swaps completed"},
+    {"id": "bookworm", "label": "Bookworm", "threshold": 5, "blurb": "5 swaps completed"},
+    {"id": "legend", "label": "Loop Legend", "threshold": 10, "blurb": "10 swaps completed"},
+]
+
+READING_INTERESTS = [
+    "Short reads", "Classics", "Bestsellers", "University texts", "Italian authors",
+    "Book club picks", "Thrillers", "Poetry", "Graphic novels", "Non-fiction deep dives",
+]
+
+
+def compute_badges(swaps_count: int) -> List[dict]:
+    return [{**b, "earned": swaps_count >= b["threshold"]} for b in BADGES]
+
+
+def earned_badge_ids(swaps_count: int) -> List[str]:
+    return [b["id"] for b in BADGES if swaps_count >= b["threshold"]]
+
+
+def match_info(me: dict, other: dict, shelf_genres: Optional[set] = None) -> dict:
+    """Soft match between two readers: shared genres (profile + shelf), languages, interests."""
+    my_g = set(me.get("genres") or [])
+    their_g = set(other.get("genres") or []) | (shelf_genres or set())
+    shared_g = sorted(my_g & their_g)
+    shared_l = sorted(set(me.get("languages") or []) & set(other.get("languages") or []))
+    shared_i = sorted(set(me.get("reading_interests") or []) & set(other.get("reading_interests") or []))
+    score = 2 * len(shared_g) + len(shared_l) + len(shared_i) + (1 if other.get("is_exchanging", True) else 0)
+    return {
+        "shared_genres": shared_g,
+        "shared_languages": shared_l,
+        "shared_interests": shared_i,
+        "match_score": score if shared_g else 0,
+    }
+
+
 def public_user(u: dict) -> dict:
     if not u:
         return {}
+    swaps = u.get("swaps_count", 0)
     return {
+        "reading_interests": u.get("reading_interests", []),
+        "badges": compute_badges(swaps),
         "user_id": u["user_id"],
         "name": u.get("name", ""),
         "email": u.get("email", ""),
@@ -384,7 +426,9 @@ async def get_user(user_id: str, user: dict = Depends(get_current_user)):
         r["rater_avatar"] = rater.get("avatar_url") if rater else None
     pu = public_user(u)
     pu["distance_km"] = haversine_km(user.get("lat"), user.get("lng"), u.get("lat"), u.get("lng"))
-    return {"user": pu, "books": await _books_for(user_id), "reviews": ratings}
+    books = await _books_for(user_id)
+    pu.update(match_info(user, u, {b["genre"] for b in books if b["status"] == "Available"}))
+    return {"user": pu, "books": books, "reviews": ratings}
 
 
 # ----------------------------------------------------------------------------
@@ -439,7 +483,54 @@ async def get_book(book_id: str, user: dict = Depends(get_current_user)):
     ownerp = public_user(owner) if owner else {}
     if owner:
         ownerp["distance_km"] = haversine_km(user.get("lat"), user.get("lng"), owner.get("lat"), owner.get("lng"))
-    return {"book": clean_book(b), "owner": ownerp, "is_owner": b["owner_id"] == user["user_id"]}
+    is_owner = b["owner_id"] == user["user_id"]
+    wanted_by = 0
+    if is_owner and b.get("status") == "Available":
+        demand = await _demand_for_books(user, [b])
+        wanted_by = demand["books"].get(b["id"], 0)
+    return {"book": clean_book(b), "owner": ownerp, "is_owner": is_owner, "wanted_by": wanted_by}
+
+
+DEMAND_RADIUS_KM = 25.0
+
+
+async def _nearby_readers(user: dict) -> List[dict]:
+    """Other exchanging readers within the demand radius (or same city when no coords)."""
+    people = await db.users.find(
+        {"deleted_at": None, "is_exchanging": True, "user_id": {"$ne": user["user_id"]}}, {"_id": 0}
+    ).to_list(500)
+    out = []
+    for p in people:
+        dist = haversine_km(user.get("lat"), user.get("lng"), p.get("lat"), p.get("lng"))
+        if dist <= DEMAND_RADIUS_KM or dist == 999.0:
+            p["distance_km"] = dist
+            out.append(p)
+    return out
+
+
+async def _demand_for_books(user: dict, books: List[dict]) -> dict:
+    """How many nearby exchanging readers want each of my books (by genre + language preference)."""
+    readers = await _nearby_readers(user)
+    per_book: dict = {}
+    interested_ids = set()
+    for b in books:
+        if b.get("status") != "Available":
+            continue
+        n = 0
+        for r in readers:
+            if b.get("genre") in (r.get("genres") or []):
+                langs = r.get("languages") or []
+                if not langs or b.get("language") in langs:
+                    n += 1
+                    interested_ids.add(r["user_id"])
+        per_book[b["id"]] = n
+    return {"books": per_book, "total_readers": len(interested_ids)}
+
+
+@api.get("/books/demand")
+async def books_demand(user: dict = Depends(get_current_user)):
+    books = await db.books.find({"owner_id": user["user_id"], "deleted_at": None}, {"_id": 0}).to_list(300)
+    return await _demand_for_books(user, books)
 
 
 LANG_CODE_MAP = {
@@ -546,9 +637,12 @@ async def discover_people(
         pu["distance_km"] = dist
         pu["books"] = (await _books_for(p["user_id"], only_available=True))[:6]
         pu["available_count"] = len(pu["books"])
+        pu.update(match_info(user, p, {b["genre"] for b in pu["books"]}))
         result.append(pu)
-    result.sort(key=lambda x: x["distance_km"])
-    return {"people": result}
+    # Genre matches first, then closest.
+    result.sort(key=lambda x: (-x["match_score"], x["distance_km"]))
+    top_matches = [p for p in result if p["match_score"] > 0][:6]
+    return {"people": result, "top_matches": top_matches}
 
 
 @api.get("/discover/books")
@@ -583,6 +677,66 @@ async def discover_books(
 
 
 GENRE_LIST = ["Fiction", "Psychology", "Business", "History", "Biography", "Self-development", "Romance", "Fantasy", "Philosophy", "Science"]
+
+
+# ----------------------------------------------------------------------------
+# Wishlist — soft preferences (genres / languages / interests) surfacing
+# nearby books & readers. No exact-title matching in V1.
+# ----------------------------------------------------------------------------
+@api.get("/wishlist")
+async def wishlist(max_distance: float = 25.0, user: dict = Depends(get_current_user)):
+    my_genres = set(user.get("genres") or [])
+    my_langs = set(user.get("languages") or [])
+    prefs = {
+        "genres": sorted(my_genres),
+        "languages": sorted(my_langs),
+        "reading_interests": user.get("reading_interests", []),
+        "options": {"reading_interests": READING_INTERESTS},
+    }
+    if not my_genres:
+        return {"preferences": prefs, "books": [], "people": [], "needs_setup": True}
+
+    others = await db.users.find({"deleted_at": None, "user_id": {"$ne": user["user_id"]}}, {"_id": 0}).to_list(500)
+    owners: dict = {}
+    for o in others:
+        dist = haversine_km(user.get("lat"), user.get("lng"), o.get("lat"), o.get("lng"))
+        if dist > max_distance and dist != 999.0:
+            continue
+        o["distance_km"] = dist
+        owners[o["user_id"]] = o
+
+    books = await db.books.find(
+        {"deleted_at": None, "status": "Available", "owner_id": {"$in": list(owners.keys())}, "genre": {"$in": list(my_genres)}},
+        {"_id": 0},
+    ).to_list(500)
+    out_books = []
+    for b in books:
+        o = owners[b["owner_id"]]
+        score = 2 + (1 if not my_langs or b.get("language") in my_langs else 0) + (1 if o.get("is_exchanging", True) else 0)
+        cb = clean_book(b)
+        cb.update({
+            "owner_name": o.get("name", ""),
+            "owner_avatar": o.get("avatar_url"),
+            "owner_exchanging": o.get("is_exchanging", True),
+            "distance_km": o["distance_km"],
+            "match_score": score,
+        })
+        out_books.append(cb)
+    out_books.sort(key=lambda x: (-x["match_score"], x["distance_km"]))
+
+    out_people = []
+    for o in owners.values():
+        shelf = {b["genre"] for b in books if b["owner_id"] == o["user_id"]}
+        mi = match_info(user, o, shelf)
+        if mi["match_score"] <= 0:
+            continue
+        pu = public_user(o)
+        pu["distance_km"] = o["distance_km"]
+        pu["available_count"] = len([b for b in books if b["owner_id"] == o["user_id"]])
+        pu.update(mi)
+        out_people.append(pu)
+    out_people.sort(key=lambda x: (-x["match_score"], x["distance_km"]))
+    return {"preferences": prefs, "books": out_books[:40], "people": out_people[:20], "needs_setup": False}
 
 
 # ----------------------------------------------------------------------------
@@ -848,10 +1002,19 @@ async def complete_swap(swap_id: str, user: dict = Depends(get_current_user)):
     field = "requester_completed" if s["requester_id"] == user["user_id"] else "receiver_completed"
     await db.swaps.update_one({"id": swap_id}, {"$set": {field: True}})
     s = await db.swaps.find_one({"id": swap_id})
+    new_badges = []
     if s.get("requester_completed") and s.get("receiver_completed") and s["status"] != "completed":
         await db.swaps.update_one({"id": swap_id}, {"$set": {"status": "completed"}})
         for uid in (s["requester_id"], s["receiver_id"]):
+            u = await db.users.find_one({"user_id": uid}, {"_id": 0})
+            before = earned_badge_ids(u.get("swaps_count", 0)) if u else []
             await db.users.update_one({"user_id": uid}, {"$inc": {"swaps_count": 1}})
+            after = earned_badge_ids((u.get("swaps_count", 0) if u else 0) + 1)
+            unlocked = [b for b in BADGES if b["id"] in after and b["id"] not in before]
+            for b in unlocked:
+                await _add_message(swap_id, None, "system", f"🏅 {u.get('name', 'Someone')} unlocked the {b['label']} badge!")
+            if uid == user["user_id"]:
+                new_badges = unlocked
         proposal = s.get("active_proposal")
         if proposal:
             for bid in (proposal.get("offered_book_id"), proposal.get("requested_book_id")):
@@ -860,7 +1023,7 @@ async def complete_swap(swap_id: str, user: dict = Depends(get_current_user)):
         await _add_message(swap_id, None, "system", "Swap completed! Leave a rating.")
     else:
         await _add_message(swap_id, user["user_id"], "system", f"{user['name']} marked the swap complete.")
-    return {"ok": True}
+    return {"ok": True, "new_badges": new_badges}
 
 
 @api.post("/swaps/{swap_id}/rate")
@@ -968,6 +1131,7 @@ async def startup():
         logger.warning(f"Storage init failed: {e}")
     try:
         await seed_demo()
+        await backfill_seed_interests()
     except Exception as e:
         logger.warning(f"Seed failed: {e}")
 
@@ -982,6 +1146,26 @@ async def shutdown():
 # ----------------------------------------------------------------------------
 def cover(isbn: str) -> str:
     return f"https://covers.openlibrary.org/b/isbn/{isbn}-L.jpg"
+
+
+SEED_INTERESTS = {
+    "Maria Rossi": ["Thrillers", "Classics", "Book club picks"],
+    "Luca Bianchi": ["University texts", "Non-fiction deep dives", "Bestsellers"],
+    "Laura Conti": ["Bestsellers", "Book club picks", "Short reads"],
+    "Ahmed Hassan": ["Classics", "Non-fiction deep dives", "Poetry"],
+    "Giulia Marino": ["Italian authors", "Bestsellers", "Short reads"],
+    "Marco De Luca": ["University texts", "Non-fiction deep dives"],
+    "Sofia Greco": ["Italian authors", "Classics", "Graphic novels"],
+    "Antonio Ferrara": ["Classics", "Italian authors", "Poetry"],
+}
+
+
+async def backfill_seed_interests():
+    for name, interests in SEED_INTERESTS.items():
+        await db.users.update_one(
+            {"name": name, "seed": True, "reading_interests": {"$exists": False}},
+            {"$set": {"reading_interests": interests}},
+        )
 
 
 async def seed_demo():

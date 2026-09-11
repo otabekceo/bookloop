@@ -1,15 +1,16 @@
 import { useRef, useState, useMemo, useCallback } from "react";
-import { View, FlatList, useWindowDimensions, Pressable, RefreshControl, ActivityIndicator } from "react-native";
+import { View, FlatList, ScrollView, useWindowDimensions, Pressable, RefreshControl, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from "@gorhom/bottom-sheet";
-import { MagnifyingGlass, SlidersHorizontal, Bell, BookOpen } from "phosphor-react-native";
+import { MagnifyingGlass, SlidersHorizontal, Bell, BookOpen, Sparkle, ArrowRight } from "phosphor-react-native";
 
 import { AppText, Chip, ChipRow, Field, Button, EmptyState, haptic } from "@/src/components/ui";
 import { Logo } from "@/src/components/Logo";
-import { PersonCard, BookTile, Person, Book } from "@/src/components/cards";
+import { PersonCard, MatchCard, BookTile, Person, Book } from "@/src/components/cards";
 import { apiFetch } from "@/src/api";
+import { useAuth } from "@/src/auth";
 import { GENRES, LANGUAGES, DISTANCES } from "@/src/constants";
 import { makeStyles, useTheme } from "@/src/theme";
 import { FONTS } from "@/src/typography";
@@ -19,6 +20,7 @@ export default function Discover() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { user } = useAuth();
   const { width } = useWindowDimensions();
   const col = (width - 40 - 14) / 2;
 
@@ -40,7 +42,7 @@ export default function Discover() {
     queryKey: ["people", search, genre, language, maxDistance, exchangingOnly],
     enabled: tab === "people",
     queryFn: () =>
-      apiFetch<{ people: Person[] }>(
+      apiFetch<{ people: Person[]; top_matches: Person[] }>(
         `/api/discover/people?search=${encodeURIComponent(search)}&genre=${genre}&language=${language}&max_distance=${maxDistance}&exchanging=${exchangingOnly}`,
       ),
   });
@@ -67,6 +69,42 @@ export default function Discover() {
   const loading = tab === "people" ? peopleQ.isLoading : booksQ.isLoading;
   const people = peopleQ.data?.people || [];
   const books = booksQ.data?.books || [];
+  const topMatches = peopleQ.data?.top_matches || [];
+  const showMatches = !search && genre === "All";
+  const hasGenres = (user?.genres?.length || 0) > 0;
+
+  const MatchesStrip = showMatches ? (
+    hasGenres && topMatches.length > 0 ? (
+      <View style={styles.matches} testID="genre-matches">
+        <View style={styles.matchesHead}>
+          <Sparkle size={16} color={colors.brandPrimary} weight="fill" />
+          <AppText variant="heading">Great matches for you</AppText>
+        </View>
+        <AppText variant="caption" color={colors.muted}>
+          Readers whose shelves match the genres you love
+        </AppText>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 10, paddingTop: 10 }}>
+          {topMatches.map((p) => (
+            <MatchCard key={p.user_id} person={p} />
+          ))}
+        </ScrollView>
+        <AppText variant="heading" style={{ marginTop: 18 }}>
+          All readers nearby
+        </AppText>
+      </View>
+    ) : !hasGenres ? (
+      <Pressable testID="matches-setup" onPress={() => router.push("/wishlist")} style={styles.setupCard}>
+        <Sparkle size={20} color={colors.brandPrimary} weight="fill" />
+        <View style={{ flex: 1 }}>
+          <AppText variant="label">See your best matches</AppText>
+          <AppText variant="caption" color={colors.muted}>
+            Add the genres you love and we'll surface readers who share them.
+          </AppText>
+        </View>
+        <ArrowRight size={16} color={colors.brandPrimary} weight="bold" />
+      </Pressable>
+    ) : null
+  ) : null;
 
   const Header = useMemo(
     () => (
@@ -141,6 +179,7 @@ export default function Discover() {
           data={people}
           keyExtractor={(p) => p.user_id}
           renderItem={({ item }) => <PersonCard person={item} />}
+          ListHeaderComponent={MatchesStrip}
           contentContainerStyle={{ padding: 20, paddingTop: 8, gap: 14, paddingBottom: 24 }}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={peopleQ.isRefetching} onRefresh={peopleQ.refetch} tintColor={colors.brandPrimary} />}
@@ -252,4 +291,7 @@ const useStyles = makeStyles((colors) => ({
   switchOn: { backgroundColor: colors.brandSecondary },
   knob: { width: 24, height: 24, borderRadius: 12, backgroundColor: "#FFFFFF" },
   knobOn: { alignSelf: "flex-end" },
+  matches: { marginBottom: 4 },
+  matchesHead: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 },
+  setupCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.brandTertiary, borderRadius: 16, padding: 14, marginBottom: 4 },
 }));

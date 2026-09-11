@@ -5,10 +5,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import * as Clipboard from "expo-clipboard";
-import { MapPin, PencilSimple, SignOut, UserPlus, Copy, ShareNetwork } from "phosphor-react-native";
+import { MapPin, PencilSimple, SignOut, UserPlus, Copy, ShareNetwork, Sparkle, CaretRight } from "phosphor-react-native";
 
 import { AppText, Avatar, Button, RatingPill, haptic, useToast } from "@/src/components/ui";
 import { BookTile, Book } from "@/src/components/cards";
+import { BadgeGrid } from "@/src/components/badges";
 import { useAuth } from "@/src/auth";
 import { apiFetch } from "@/src/api";
 import { makeStyles, useTheme } from "@/src/theme";
@@ -164,6 +165,27 @@ export default function Profile() {
         </Pressable>
       </View>
 
+      {/* Swap badges */}
+      <Section title="Swap badges">
+        <BadgeGrid badges={user.badges || []} swapsCount={user.swaps_count} />
+      </Section>
+
+      {/* Wishlist */}
+      <Pressable testID="wishlist-card" onPress={() => router.push("/wishlist")} style={styles.wishCard}>
+        <View style={styles.wishIcon}>
+          <Sparkle size={22} color={colors.onBrandPrimary} weight="fill" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <AppText variant="heading">My wishlist</AppText>
+          <AppText variant="caption" color={colors.muted}>
+            {user.genres.length > 0
+              ? `${user.genres.length} genres · ${user.reading_interests?.length || 0} interests · see books for you`
+              : "Tell us what you're hunting for"}
+          </AppText>
+        </View>
+        <CaretRight size={18} color={colors.muted} weight="bold" />
+      </Pressable>
+
       {/* Genres */}
       <Section title="Interested in">
         {user.genres.length > 0 ? (
@@ -182,6 +204,21 @@ export default function Profile() {
           </AppText>
         )}
       </Section>
+
+      {/* Reading interests */}
+      {(user.reading_interests?.length || 0) > 0 && (
+        <Section title="Reading interests">
+          <View style={styles.tagWrap}>
+            {user.reading_interests.map((i) => (
+              <View key={i} style={[styles.tag, { backgroundColor: colors.surfaceTertiary }]}>
+                <AppText variant="label" color={colors.onSurfaceTertiary}>
+                  {i}
+                </AppText>
+              </View>
+            ))}
+          </View>
+        </Section>
+      )}
 
       {/* Languages */}
       <Section title="Languages">
@@ -253,6 +290,8 @@ const useStyles = makeStyles((colors) => ({
   inviteShare: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: colors.brandPrimary, borderRadius: 14, height: 50 },
   inviteCopy: { width: 50, height: 50, borderRadius: 14, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  wishCard: { flexDirection: "row", alignItems: "center", gap: 14, marginHorizontal: 20, marginTop: 24, backgroundColor: colors.brandTertiary, borderRadius: 18, padding: 16 },
+  wishIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" },
   tagWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   tag: { backgroundColor: colors.brandTertiary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },
 }));

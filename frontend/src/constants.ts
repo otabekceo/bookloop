@@ -26,3 +26,16 @@ export const CONDITIONS = ["Like New", "Good", "Acceptable"];
 export const DISTANCES = [1, 5, 10, 25, 50];
 
 export const BOOK_STATUSES = ["Available", "Reserved", "Swapped"];
+
+export const READING_INTERESTS = [
+  "Short reads",
+  "Classics",
+  "Bestsellers",
+  "University texts",
+  "Italian authors",
+  "Book club picks",
+  "Thrillers",
+  "Poetry",
+  "Graphic novels",
+  "Non-fiction deep dives",
+];

@@ -189,7 +189,7 @@ export function ChipRow({ children, style }: { children: React.ReactNode; style?
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      style={[{ height: 56 }, style]}
+      style={[{ height: 56, flexGrow: 0, flexShrink: 0 }, style]}
       contentContainerStyle={{ gap: 8, paddingHorizontal: 20, alignItems: "center" }}
     >
       {children}

@@ -237,7 +237,12 @@ export default function SwapChat() {
                 title="Mark as completed"
                 icon={<CheckCircle size={18} color={colors.onBrandPrimary} weight="bold" />}
                 disabled={iCompleted}
-                onPress={() => act(() => apiFetch(`/api/swaps/${id}/complete`, { method: "POST" }), "success")}
+                onPress={() =>
+                  act(async () => {
+                    const r = await apiFetch<{ new_badges?: { label: string }[] }>(`/api/swaps/${id}/complete`, { method: "POST" });
+                    if (r.new_badges?.length) toast(`🏅 Badge unlocked: ${r.new_badges.map((b) => b.label).join(", ")}!`, "success");
+                  }, "success")
+                }
               />
             </View>
           )}

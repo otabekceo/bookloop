@@ -5,13 +5,12 @@ import { useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback } from "react";
-import { BookOpen } from "phosphor-react-native";
+import { BookOpen, Fire } from "phosphor-react-native";
 
 import { AppText, Chip, ChipRow, Button, EmptyState } from "@/src/components/ui";
 import { BookTile, Book } from "@/src/components/cards";
 import { apiFetch } from "@/src/api";
 import { makeStyles, useTheme } from "@/src/theme";
-import { FONTS } from "@/src/typography";
 
 const FILTERS = ["All", "Available", "Reserved", "Swapped"];
 
@@ -29,13 +28,20 @@ export default function MyBooks() {
     queryFn: () => apiFetch<{ books: Book[] }>(`/api/books?status=${filter}`),
   });
 
+  const { data: demand, refetch: refetchDemand } = useQuery({
+    queryKey: ["bookDemand"],
+    queryFn: () => apiFetch<{ books: Record<string, number>; total_readers: number }>("/api/books/demand"),
+  });
+
   useFocusEffect(
     useCallback(() => {
       refetch();
-    }, [refetch]),
+      refetchDemand();
+    }, [refetch, refetchDemand]),
   );
 
   const books = data?.books || [];
+  const wanted = demand?.total_readers || 0;
 
   return (
     <View style={styles.root}>
@@ -60,8 +66,25 @@ export default function MyBooks() {
           keyExtractor={(b) => b.id}
           numColumns={2}
           columnWrapperStyle={{ gap: 14 }}
+          ListHeaderComponent={
+            wanted > 0 ? (
+              <View testID="demand-banner" style={styles.banner}>
+                <View style={styles.bannerIcon}>
+                  <Fire size={18} color={colors.onBrandPrimary} weight="fill" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <AppText variant="label">
+                    {wanted} {wanted === 1 ? "reader" : "readers"} nearby want books like yours
+                  </AppText>
+                  <AppText variant="caption" color={colors.muted}>
+                    Based on the genres & languages they're hunting for
+                  </AppText>
+                </View>
+              </View>
+            ) : null
+          }
           renderItem={({ item }) => (
-            <BookTile book={item} width={col} showStatus onPress={() => router.push(`/book/${item.id}`)} />
+            <BookTile book={item} width={col} showStatus wantedBy={demand?.books?.[item.id]} onPress={() => router.push(`/book/${item.id}`)} />
           )}
           contentContainerStyle={{ padding: 20, paddingTop: 8, gap: 18, paddingBottom: 24 }}
           showsVerticalScrollIndicator={false}
@@ -83,4 +106,6 @@ export default function MyBooks() {
 const useStyles = makeStyles((colors) => ({
   root: { flex: 1, backgroundColor: colors.surface },
   header: { paddingHorizontal: 20, paddingBottom: 8, gap: 2 },
+  banner: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.brandTertiary, borderRadius: 16, padding: 14, marginBottom: 4 },
+  bannerIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" },
 }));

@@ -1,8 +1,9 @@
 import { View, Pressable, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
-import { MapPin } from "phosphor-react-native";
+import { MapPin, Sparkle, Fire } from "phosphor-react-native";
 
 import { AppText, Avatar, BookCover, ExchangingDot, RatingPill, StatusBadge, haptic } from "@/src/components/ui";
+import { Badge, BadgeIcon, topBadge } from "@/src/components/badges";
 import { useTheme } from "@/src/theme";
 
 export type Person = {
@@ -18,6 +19,11 @@ export type Person = {
   genres: string[];
   books?: any[];
   available_count?: number;
+  shared_genres?: string[];
+  shared_languages?: string[];
+  shared_interests?: string[];
+  match_score?: number;
+  badges?: Badge[];
 };
 
 export type Book = {
@@ -37,6 +43,10 @@ export type Book = {
 export function PersonCard({ person }: { person: Person }) {
   const { colors } = useTheme();
   const router = useRouter();
+  const shared = new Set(person.shared_genres || []);
+  const best = topBadge(person.badges);
+  // Show shared genres first so the match is glanceable.
+  const genres = [...(person.genres || [])].sort((a, b) => Number(shared.has(b)) - Number(shared.has(a)));
   return (
     <Pressable
       testID={`person-card-${person.user_id}`}
@@ -59,6 +69,14 @@ export function PersonCard({ person }: { person: Person }) {
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
             <AppText variant="heading">{person.name}</AppText>
             <ExchangingDot active={person.is_exchanging} />
+            {best && (
+              <View testID={`person-badge-${best.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: colors.brandTertiary, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 }}>
+                <BadgeIcon id={best.id} size={12} color={colors.onBrandTertiary} />
+                <AppText variant="caption" color={colors.onBrandTertiary} style={{ fontSize: 11 }}>
+                  {best.label}
+                </AppText>
+              </View>
+            )}
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
@@ -75,15 +93,26 @@ export function PersonCard({ person }: { person: Person }) {
         </View>
       </View>
 
-      {person.genres?.length > 0 && (
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-          {person.genres.slice(0, 3).map((g) => (
-            <View key={g} style={{ backgroundColor: colors.surfaceTertiary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
-              <AppText variant="caption" color={colors.onSurfaceTertiary}>
-                {g}
+      {genres.length > 0 && (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+          {shared.size > 0 && (
+            <View testID="shared-genres-pill" style={{ flexDirection: "row", alignItems: "center", gap: 4, marginRight: 2 }}>
+              <Sparkle size={13} color={colors.brandPrimary} weight="fill" />
+              <AppText variant="caption" color={colors.brandPrimary}>
+                {shared.size} in common
               </AppText>
             </View>
-          ))}
+          )}
+          {genres.slice(0, 3).map((g) => {
+            const hit = shared.has(g);
+            return (
+              <View key={g} style={{ backgroundColor: hit ? colors.brandTertiary : colors.surfaceTertiary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
+                <AppText variant="caption" color={hit ? colors.onBrandTertiary : colors.onSurfaceTertiary}>
+                  {g}
+                </AppText>
+              </View>
+            );
+          })}
         </View>
       )}
 
@@ -105,18 +134,69 @@ export function PersonCard({ person }: { person: Person }) {
   );
 }
 
+/** Compact card for the "Great matches" strip on Discover. */
+export function MatchCard({ person }: { person: Person }) {
+  const { colors } = useTheme();
+  const router = useRouter();
+  const shared = person.shared_genres || [];
+  return (
+    <Pressable
+      testID={`match-card-${person.user_id}`}
+      onPress={() => {
+        haptic("light");
+        router.push(`/person/${person.user_id}`);
+      }}
+      style={{
+        width: 156,
+        backgroundColor: colors.surfaceSecondary,
+        borderRadius: 18,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: colors.brandTertiary,
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      <Avatar uri={person.avatar_url} name={person.name} size={56} />
+      <AppText variant="label" numberOfLines={1} style={{ textAlign: "center" }}>
+        {person.name}
+      </AppText>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+        <Sparkle size={12} color={colors.brandPrimary} weight="fill" />
+        <AppText variant="caption" color={colors.brandPrimary}>
+          {shared.length} {shared.length === 1 ? "genre" : "genres"} in common
+        </AppText>
+      </View>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 4 }}>
+        {shared.slice(0, 2).map((g) => (
+          <View key={g} style={{ backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+            <AppText variant="caption" color={colors.onBrandTertiary} style={{ fontSize: 11 }}>
+              {g}
+            </AppText>
+          </View>
+        ))}
+      </View>
+      <AppText variant="caption" color={colors.muted}>
+        {person.distance_km < 999 ? `${person.distance_km} km away` : person.neighborhood}
+      </AppText>
+    </Pressable>
+  );
+}
+
 export function BookTile({
   book,
   width,
   onPress,
   showStatus,
   showOwner,
+  wantedBy,
 }: {
   book: Book;
   width: number;
   onPress?: () => void;
   showStatus?: boolean;
   showOwner?: boolean;
+  wantedBy?: number;
 }) {
   const { colors } = useTheme();
   return (
@@ -138,7 +218,17 @@ export function BookTile({
         <AppText variant="caption" color={colors.muted} numberOfLines={1}>
           {showOwner && book.owner_name ? book.owner_name : book.author}
         </AppText>
-        {showStatus && <StatusBadge status={book.status} />}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          {showStatus && <StatusBadge status={book.status} />}
+          {(wantedBy || 0) > 0 && (
+            <View testID={`wanted-pill-${book.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+              <Fire size={11} color={colors.onBrandTertiary} weight="fill" />
+              <AppText variant="caption" color={colors.onBrandTertiary} style={{ fontSize: 11 }}>
+                {wantedBy} want{wantedBy === 1 ? "s" : ""} this
+              </AppText>
+            </View>
+          )}
+        </View>
       </View>
     </Pressable>
   );

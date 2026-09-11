@@ -3,10 +3,11 @@ import { View, ScrollView, Pressable, ActivityIndicator, useWindowDimensions } f
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, MapPin, ArrowsClockwise, ArrowRight } from "phosphor-react-native";
+import { ArrowLeft, MapPin, ArrowsClockwise, ArrowRight, Sparkle } from "phosphor-react-native";
 
 import { AppText, Avatar, Button, Stars, RatingPill, ExchangingDot, EmptyState, haptic, useToast } from "@/src/components/ui";
 import { BookTile, Book } from "@/src/components/cards";
+import { BadgeChips } from "@/src/components/badges";
 import { apiFetch } from "@/src/api";
 import { makeStyles, useTheme } from "@/src/theme";
 
@@ -79,21 +80,37 @@ export default function PersonProfile() {
               </View>
             </View>
 
+            <View style={{ marginTop: 10 }}>
+              <BadgeChips badges={data.user.badges} />
+            </View>
+
             {data.user.bio ? (
               <AppText variant="body" style={{ marginTop: 16, textAlign: "center" }}>
                 {data.user.bio}
               </AppText>
             ) : null}
 
+            {(data.user.shared_genres?.length || 0) > 0 && (
+              <View testID="shared-genres" style={styles.sharedRow}>
+                <Sparkle size={14} color={colors.brandPrimary} weight="fill" />
+                <AppText variant="caption" color={colors.brandPrimary}>
+                  You both love {data.user.shared_genres.join(", ")}
+                </AppText>
+              </View>
+            )}
+
             {data.user.genres?.length > 0 && (
               <View style={styles.tagWrap}>
-                {data.user.genres.map((g: string) => (
-                  <View key={g} style={styles.tag}>
-                    <AppText variant="label" color={colors.onBrandTertiary}>
-                      {g}
-                    </AppText>
-                  </View>
-                ))}
+                {data.user.genres.map((g: string) => {
+                  const hit = (data.user.shared_genres || []).includes(g);
+                  return (
+                    <View key={g} style={[styles.tag, !hit && { backgroundColor: colors.surfaceTertiary }]}>
+                      <AppText variant="label" color={hit ? colors.onBrandTertiary : colors.onSurfaceTertiary}>
+                        {g}
+                      </AppText>
+                    </View>
+                  );
+                })}
               </View>
             )}
 
@@ -167,7 +184,8 @@ const useStyles = makeStyles((colors) => ({
   root: { flex: 1, backgroundColor: colors.surface },
   topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingBottom: 10, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
   backBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
-  tagWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 16 },
+  tagWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 12 },
+  sharedRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 16 },
   tag: { backgroundColor: colors.brandTertiary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },
   review: { backgroundColor: colors.surfaceSecondary, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.border },
   reviewsHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 28 },

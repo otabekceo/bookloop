@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Trash, MapPin, ArrowsClockwise } from "phosphor-react-native";
+import { ArrowLeft, Trash, MapPin, ArrowsClockwise, Fire } from "phosphor-react-native";
 
 import { AppText, Avatar, Button, Field, Chip, BookCover, StatusBadge, RatingPill, haptic, useToast } from "@/src/components/ui";
 import { apiFetch } from "@/src/api";
@@ -22,7 +22,7 @@ export default function BookDetail() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["book", id],
-    queryFn: () => apiFetch<{ book: any; owner: any; is_owner: boolean }>(`/api/books/detail/${id}`),
+    queryFn: () => apiFetch<{ book: any; owner: any; is_owner: boolean; wanted_by: number }>(`/api/books/detail/${id}`),
   });
 
   const [form, setForm] = useState<any>(null);
@@ -105,8 +105,16 @@ export default function BookDetail() {
       ) : isOwner ? (
         <>
           <KeyboardAwareScrollView contentContainerStyle={{ padding: 20, gap: 18, paddingBottom: 40 }} bottomOffset={90} showsVerticalScrollIndicator={false}>
-            <View style={{ alignItems: "center" }}>
+            <View style={{ alignItems: "center", gap: 10 }}>
               <BookCover uri={form.cover_url} width={130} />
+              {(data.wanted_by || 0) > 0 && (
+                <View testID="wanted-by" style={styles.wantedPill}>
+                  <Fire size={14} color={colors.onBrandTertiary} weight="fill" />
+                  <AppText variant="caption" color={colors.onBrandTertiary}>
+                    {data.wanted_by} {data.wanted_by === 1 ? "reader" : "readers"} nearby {data.wanted_by === 1 ? "is" : "are"} looking for {form.genre} books
+                  </AppText>
+                </View>
+              )}
             </View>
             <Field label="Title" value={form.title} onChangeText={(t) => setForm({ ...form, title: t })} onSurface testID="edit-title" />
             <Field label="Author" value={form.author} onChangeText={(t) => setForm({ ...form, author: t })} onSurface testID="edit-author" />
@@ -195,6 +203,7 @@ const useStyles = makeStyles((colors) => ({
   chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 4 },
   metaBadge: { backgroundColor: colors.surfaceTertiary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  wantedPill: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.brandTertiary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, maxWidth: "100%" },
   ownerCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.surfaceSecondary, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: colors.border, marginTop: 24 },
   footer: { position: "absolute", bottom: 0, left: 0, right: 0, paddingHorizontal: 20, paddingTop: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
 }));

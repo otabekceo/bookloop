@@ -19,6 +19,8 @@ export type User = {
   lng?: number;
   genres: string[];
   languages: string[];
+  reading_interests: string[];
+  badges: { id: string; label: string; threshold: number; blurb: string; earned: boolean }[];
   is_exchanging: boolean;
   rating: number;
   rating_count: number;

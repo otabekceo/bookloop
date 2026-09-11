@@ -52,6 +52,7 @@ function RootNavigator() {
       <Stack.Screen name="book/add" options={{ presentation: "modal" }} />
       <Stack.Screen name="book/scan" options={{ presentation: "fullScreenModal" }} />
       <Stack.Screen name="edit-profile" options={{ presentation: "modal" }} />
+      <Stack.Screen name="wishlist" options={{ presentation: "card" }} />
     </Stack>
   );
 }
