@@ -5,16 +5,18 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, MapPin, ArrowsClockwise, ArrowRight, Sparkle } from "phosphor-react-native";
 
-import { AppText, Avatar, Button, Stars, RatingPill, ExchangingDot, EmptyState, haptic, useToast } from "@/src/components/ui";
+import { AppText, Avatar, Button, Stars, RatingPill, ExchangingDot, EmptyState, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
 import { BookTile, Book } from "@/src/components/cards";
 import { BadgeChips } from "@/src/components/badges";
 import { apiFetch } from "@/src/api";
 import { makeStyles, useTheme } from "@/src/theme";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 export default function PersonProfile() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const styles = useStyles();
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const toast = useToast();
@@ -38,7 +40,7 @@ export default function PersonProfile() {
       haptic("success");
       router.push(`/swap/${res.swap.id}`);
     } catch (e: any) {
-      toast(e.message || "Could not start swap", "error");
+      toast(e.message || t("person.couldNotStartSwap"), "error");
     } finally {
       setRequesting(false);
     }
@@ -49,9 +51,11 @@ export default function PersonProfile() {
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <Pressable testID="back-button" onPress={() => router.back()} style={styles.backBtn}>
-          <ArrowLeft size={22} color={colors.onSurface} />
+          <DirectionalIcon>
+            <ArrowLeft size={22} color={colors.onSurface} />
+          </DirectionalIcon>
         </Pressable>
-        <AppText variant="heading">Profile</AppText>
+        <AppText variant="heading">{t("person.title")}</AppText>
         <View style={{ width: 42 }} />
       </View>
 
@@ -70,12 +74,12 @@ export default function PersonProfile() {
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
                   <MapPin size={14} color={colors.brandSecondary} weight="fill" />
                   <AppText variant="caption" color={colors.muted}>
-                    {data.user.distance_km < 999 ? `${data.user.distance_km} km away` : data.user.neighborhood}
+                    {data.user.distance_km < 999 ? t("common.kmAway", { distance: data.user.distance_km }) : data.user.neighborhood}
                   </AppText>
                 </View>
                 <RatingPill rating={data.user.rating} count={data.user.rating_count} />
                 <AppText variant="caption" color={colors.muted}>
-                  {data.user.swaps_count} swaps
+                  {t("common.swapCount", { count: data.user.swaps_count })}
                 </AppText>
               </View>
             </View>
@@ -94,7 +98,7 @@ export default function PersonProfile() {
               <View testID="shared-genres" style={styles.sharedRow}>
                 <Sparkle size={14} color={colors.brandPrimary} weight="fill" />
                 <AppText variant="caption" color={colors.brandPrimary}>
-                  You both love {data.user.shared_genres.join(", ")}
+                  {t("person.youBothLove", { genres: data.user.shared_genres.join(", ") })}
                 </AppText>
               </View>
             )}
@@ -115,7 +119,7 @@ export default function PersonProfile() {
             )}
 
             <AppText variant="heading" style={{ marginTop: 24, marginBottom: 12 }}>
-              Available to swap ({data.books.length})
+              {t("person.availableToSwap", { count: data.books.length })}
             </AppText>
             {data.books.length > 0 ? (
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
@@ -125,7 +129,7 @@ export default function PersonProfile() {
               </View>
             ) : (
               <AppText variant="body" color={colors.muted}>
-                No books listed yet.
+                {t("person.noBooksListed")}
               </AppText>
             )}
 
@@ -135,12 +139,14 @@ export default function PersonProfile() {
               style={styles.reviewsHead}
             >
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                <AppText variant="heading">Reviews</AppText>
+                <AppText variant="heading">{t("person.reviews")}</AppText>
                 <RatingPill rating={data.user.rating} count={data.user.rating_count} />
               </View>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-                <AppText variant="label" color={colors.brandPrimary}>See all</AppText>
-                <ArrowRight size={16} color={colors.brandPrimary} weight="bold" />
+                <AppText variant="label" color={colors.brandPrimary}>{t("person.seeAll")}</AppText>
+                <DirectionalIcon>
+                  <ArrowRight size={16} color={colors.brandPrimary} weight="bold" />
+                </DirectionalIcon>
               </View>
             </Pressable>
             {data.reviews.length > 0 ? (
@@ -160,7 +166,7 @@ export default function PersonProfile() {
               </View>
             ) : (
               <AppText variant="body" color={colors.muted} style={{ marginTop: 8 }}>
-                No reviews yet — be the first to swap with {data.user.name?.split(" ")[0]}.
+                {t("person.noReviews", { name: data.user.name?.split(" ")[0] })}
               </AppText>
             )}
           </ScrollView>
@@ -168,7 +174,7 @@ export default function PersonProfile() {
           <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
             <Button
               testID="request-swap-button"
-              title="Request Swap"
+              title={t("person.requestSwap")}
               icon={<ArrowsClockwise size={18} color={colors.onBrandPrimary} weight="bold" />}
               onPress={requestSwap}
               loading={requesting}

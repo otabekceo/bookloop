@@ -12,6 +12,7 @@ import { apiFetch } from "@/src/api";
 import { pickImage, uploadWithProgress, openSettings } from "@/src/media";
 import { GENRES, LANGUAGES } from "@/src/constants";
 import { makeStyles, useTheme } from "@/src/theme";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 const NB_COORDS: Record<string, { lat: number; lng: number }> = {
   Centro: { lat: 38.1938, lng: 15.554 },
@@ -29,6 +30,7 @@ export default function EditProfile() {
   const router = useRouter();
   const toast = useToast();
   const qc = useQueryClient();
+  const { t } = useLanguage();
   const { user, refreshUser } = useAuth();
 
   const [name, setName] = useState(user?.name || "");
@@ -47,7 +49,7 @@ export default function EditProfile() {
 
   const pickAvatar = async (source: "library" | "camera") => {
     const picked = await pickImage(source, (blocked) => {
-      toast(blocked ? "Enable photo access in Settings" : "Permission needed", "error");
+      toast(blocked ? t("editProfile.enablePhotoAccess") : t("editProfile.permissionNeeded"), "error");
       if (blocked) openSettings();
     });
     if (!picked) return;
@@ -56,7 +58,7 @@ export default function EditProfile() {
       const up = await uploadWithProgress(picked.uri);
       setAvatar(up.url);
     } catch (e: any) {
-      toast(e.message || "Upload failed", "error");
+      toast(e.message || t("editProfile.uploadFailed"), "error");
     } finally {
       setUploading(false);
     }
@@ -73,10 +75,10 @@ export default function EditProfile() {
       await refreshUser();
       qc.invalidateQueries();
       haptic("success");
-      toast("Profile updated", "success");
+      toast(t("editProfile.profileUpdated"), "success");
       router.back();
     } catch (e: any) {
-      toast(e.message || "Could not save", "error");
+      toast(e.message || t("editProfile.couldNotSave"), "error");
     } finally {
       setSaving(false);
     }
@@ -89,7 +91,7 @@ export default function EditProfile() {
         <Pressable testID="close-edit" onPress={() => router.back()} style={styles.iconBtn}>
           <X size={22} color={colors.onSurface} />
         </Pressable>
-        <AppText variant="heading">Edit profile</AppText>
+        <AppText variant="heading">{t("editProfile.title")}</AppText>
         <View style={{ width: 42 }} />
       </View>
 
@@ -104,22 +106,22 @@ export default function EditProfile() {
           <View style={{ flexDirection: "row", gap: 10 }}>
             <Pressable testID="avatar-gallery" onPress={() => pickAvatar("library")} style={styles.smallBtn}>
               <ImageIcon size={16} color={colors.onSurface} />
-              <AppText variant="label">Gallery</AppText>
+              <AppText variant="label">{t("editProfile.gallery")}</AppText>
             </Pressable>
             {Platform.OS !== "web" && (
               <Pressable testID="avatar-camera" onPress={() => pickAvatar("camera")} style={styles.smallBtn}>
                 <Camera size={16} color={colors.onSurface} />
-                <AppText variant="label">Camera</AppText>
+                <AppText variant="label">{t("editProfile.camera")}</AppText>
               </Pressable>
             )}
           </View>
         </View>
 
-        <Field testID="edit-name" label="Name" value={name} onChangeText={setName} onSurface />
-        <Field testID="edit-bio" label="Bio" value={bio} onChangeText={setBio} onSurface multiline style={{ minHeight: 70, textAlignVertical: "top" }} />
+        <Field testID="edit-name" label={t("editProfile.name")} value={name} onChangeText={setName} onSurface />
+        <Field testID="edit-bio" label={t("editProfile.bio")} value={bio} onChangeText={setBio} onSurface multiline style={{ minHeight: 70, textAlignVertical: "top" }} />
 
         <View style={{ gap: 10 }}>
-          <AppText variant="label">Neighborhood</AppText>
+          <AppText variant="label">{t("editProfile.neighborhood")}</AppText>
           <View style={styles.wrap}>
             {Object.keys(NB_COORDS).map((n) => (
               <Chip key={n} label={n} selected={neighborhood === n} onPress={() => setNeighborhood(n)} testID={`nb-${n}`} />
@@ -128,7 +130,7 @@ export default function EditProfile() {
         </View>
 
         <View style={{ gap: 10 }}>
-          <AppText variant="label">Interested genres</AppText>
+          <AppText variant="label">{t("editProfile.interestedGenres")}</AppText>
           <View style={styles.wrap}>
             {GENRES.map((g) => (
               <Chip key={g} label={g} selected={genres.includes(g)} onPress={() => toggle(genres, setGenres, g)} testID={`pg-${g}`} />
@@ -137,7 +139,7 @@ export default function EditProfile() {
         </View>
 
         <View style={{ gap: 10 }}>
-          <AppText variant="label">Languages</AppText>
+          <AppText variant="label">{t("editProfile.languages")}</AppText>
           <View style={styles.wrap}>
             {LANGUAGES.map((l) => (
               <Chip key={l} label={l} selected={languages.includes(l)} onPress={() => toggle(languages, setLanguages, l)} testID={`pl-${l}`} />
@@ -145,7 +147,7 @@ export default function EditProfile() {
           </View>
         </View>
 
-        <Button testID="save-profile" title="Save profile" onPress={save} loading={saving} style={{ marginTop: 8 }} />
+        <Button testID="save-profile" title={t("editProfile.saveProfile")} onPress={save} loading={saving} style={{ marginTop: 8 }} />
       </KeyboardAwareScrollView>
     </View>
   );

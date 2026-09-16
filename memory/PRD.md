@@ -22,6 +22,18 @@ Discover people → explore their books → request a general swap → chat → 
 - General swap request → in-swap chat → specific book proposal → accept/decline → complete (both) → rate.
 - Ratings recompute profile rating & swaps count.
 
+## Iteration 4 — Multilingual support + Arabic RTL (2026-09-16)
+- ✅ **5 fully supported languages**: 🇺🇿 O'zbek (`uz`), 🇬🇧 English (`en`), 🇷🇺 Русский (`ru`), 🇮🇹 Italiano (`it`), 🇸🇦 العربية (`ar`). English is the default/fallback.
+- ✅ **i18n architecture**: `i18next` + `react-i18next` with namespaced translation keys (`common`, `languageSelect`, `auth`, `tabs`, `discover`, `map`, `books`, `swaps`, `profile`, `person`, `bookDetail`, `addBook`, `scan`, `swapChat`, `reviews`, `wishlist`, `editProfile`, `badges`, `cards`, `status`, `validation`, `errors`, `confirmations`, `emptyStates`). **335 keys per locale, verified in parity across all 5 files.** No hard-coded user-facing strings remain (all screens + shared components use `t()`).
+- ✅ **First-time language selection**: `app/(auth)/language.tsx` shown before signup/login for brand-new users ("Please select your language" + 5 language cards). `RootNavigator` routes new users there.
+- ✅ **Persistence (dual)**: locally via AsyncStorage (`bookloop.language`) and server-side via `preferred_language` on the user profile (`ProfileUpdate` + `public_user` in `backend/server.py`). `LanguageSync` in `app/_layout.tsx` reconciles server → device on login.
+- ✅ **Change language later**: Profile → Language (`app/settings/language.tsx`) modal.
+- ✅ **Arabic RTL**: `I18nManager.allowRTL/forceRTL` driven by `LanguageProvider`; `useRTL()` hook; `DirectionalIcon` wrapper mirrors only direction-dependent icons (back/forward arrows, chevrons) while leaving stars/hearts/cameras unchanged; `AppText`/`Field` right-align + `writingDirection: "rtl"` for Arabic. Direction change requires an app reload (RN reads `isRTL` at startup).
+- ✅ **Arabic font**: bundled **Noto Sans Arabic** (Regular/Medium/Bold) in `assets/fonts`, registered in `src/typography.ts` as `ARABIC_FONTS`; `fontsForLanguage(language)` returns it for `ar`, else Fraunces/DM Sans. Applied in `AppText`, `Field`, `BookCover`, `StatusBadge`, and screen-level inline styles (since `makeStyles` factories only receive `colors`).
+- ✅ **Mixed text + number/date formatting**: centralized `localeFor()`, `formatDate()`, `formatNumber()` in `src/i18n/index.ts` (locale tags `uz-UZ`, `en-US`, `ru-RU`, `it-IT`, `ar`) so dates/numbers render with the correct locale (Arabic-Indic digits + Arabic month names).
+- ✅ **Error boundary localized**: `src/components/error-boundary.tsx` now uses `errors.crashTitle/crashBody/reloadApp/showDetails/hideDetails`.
+- ✅ Verified: `npx tsc --noEmit` reports only 5 pre-existing unrelated errors (DensityMap module resolution, `_layout` segments comparison, `ui.tsx` StyleProp/ImageStyle overflow, `theme.ts` ColorScheme typing); locale key parity script passes (335 keys × 5).
+
 ## Iteration 2 — fixes & features (2026-06-10)
 - ✅ Official BookLoop logo (processed transparent PNG) on auth card + Discover header (`src/components/Logo.tsx`).
 - ✅ Invite Friends on Profile: native Share + copy invite link (`?ref={user_id}`).

@@ -3,6 +3,7 @@ import { Medal, Fire, Books, Crown } from "phosphor-react-native";
 
 import { AppText } from "@/src/components/ui";
 import { makeStyles, useTheme } from "@/src/theme";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 export type Badge = { id: string; label: string; threshold: number; blurb: string; earned: boolean };
 
@@ -41,6 +42,7 @@ export function BadgeChips({ badges }: { badges?: Badge[] }) {
 export function BadgeGrid({ badges, swapsCount }: { badges: Badge[]; swapsCount: number }) {
   const styles = useStyles();
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const next = badges.find((b) => !b.earned);
   return (
     <View style={{ gap: 12 }}>
@@ -58,8 +60,8 @@ export function BadgeGrid({ badges, swapsCount }: { badges: Badge[]; swapsCount:
       </View>
       <AppText variant="caption" color={colors.muted} testID="badge-progress">
         {next
-          ? `${next.threshold - swapsCount} more ${next.threshold - swapsCount === 1 ? "swap" : "swaps"} to unlock ${next.label}`
-          : "You've unlocked every badge — legend status!"}
+          ? t("badges.progress", { count: next.threshold - swapsCount, label: next.label })
+          : t("badges.allUnlocked")}
       </AppText>
     </View>
   );

@@ -138,6 +138,7 @@ class ProfileUpdate(BaseModel):
     is_exchanging: Optional[bool] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
+    preferred_language: Optional[str] = None
 
 
 class BookBody(BaseModel):
@@ -234,6 +235,7 @@ def public_user(u: dict) -> dict:
         "rating": round(u.get("rating", 0.0), 1),
         "rating_count": u.get("rating_count", 0),
         "swaps_count": u.get("swaps_count", 0),
+        "preferred_language": u.get("preferred_language"),
     }
 
 
@@ -321,6 +323,7 @@ async def register(body: RegisterBody):
         "rating": 0.0,
         "rating_count": 0,
         "swaps_count": 0,
+        "preferred_language": None,
         "created_at": now_utc(),
         "deleted_at": None,
     }
@@ -373,6 +376,7 @@ async def google_session(body: SessionBody):
             "rating": 0.0,
             "rating_count": 0,
             "swaps_count": 0,
+            "preferred_language": None,
             "created_at": now_utc(),
             "deleted_at": None,
         }

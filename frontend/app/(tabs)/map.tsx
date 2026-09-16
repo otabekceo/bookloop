@@ -6,9 +6,10 @@ import { useQuery } from "@tanstack/react-query";
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from "@gorhom/bottom-sheet";
 import { MapPin, Users, BookOpen, ArrowRight } from "phosphor-react-native";
 
-import { AppText, Button } from "@/src/components/ui";
+import { AppText, Button, DirectionalIcon } from "@/src/components/ui";
 import DensityMap from "@/src/components/DensityMap";
 import { apiFetch } from "@/src/api";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { makeStyles, useTheme } from "@/src/theme";
 
 type Cluster = {
@@ -25,6 +26,7 @@ export default function MapScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { t } = useLanguage();
   const sheetRef = useRef<BottomSheet>(null);
   const [selected, setSelected] = useState<Cluster | null>(null);
 
@@ -66,10 +68,10 @@ export default function MapScreen() {
         <View style={[styles.header, { paddingTop: insets.top + 10 }]} pointerEvents="none">
           <View style={styles.headerPill}>
             <MapPin size={16} color={colors.brandSecondary} weight="fill" />
-            <AppText variant="heading">Messina</AppText>
+            <AppText variant="heading">{t("map.city")}</AppText>
           </View>
           <View style={styles.headerPillSmall}>
-            <AppText variant="caption" color={colors.muted}>Active exchanger density</AppText>
+            <AppText variant="caption" color={colors.muted}>{t("map.densityTitle")}</AppText>
           </View>
         </View>
       </View>
@@ -79,9 +81,9 @@ export default function MapScreen() {
           <Users size={22} color={colors.onBrandPrimary} weight="fill" />
         </View>
         <View style={{ flex: 1 }}>
-          <AppText variant="title">{data?.total_active ?? 0} readers nearby</AppText>
+          <AppText variant="title">{t("map.readersNearby", { count: data?.total_active ?? 0 })}</AppText>
           <AppText variant="body" color={colors.muted}>
-            currently willing to exchange {data?.total_books ?? 0} books · tap a cluster
+            {t("map.clusterHint", { count: data?.total_books ?? 0 })}
           </AppText>
         </View>
       </View>
@@ -106,17 +108,17 @@ export default function MapScreen() {
                 <View style={styles.statBox}>
                   <Users size={20} color={colors.brandPrimary} weight="fill" />
                   <AppText variant="title">{selected.people_count}</AppText>
-                  <AppText variant="caption" color={colors.muted}>active exchangers</AppText>
+                  <AppText variant="caption" color={colors.muted}>{t("map.activeExchangers")}</AppText>
                 </View>
                 <View style={styles.statBox}>
                   <BookOpen size={20} color={colors.brandSecondary} weight="fill" />
                   <AppText variant="title">{selected.books_count}</AppText>
-                  <AppText variant="caption" color={colors.muted}>books available</AppText>
+                  <AppText variant="caption" color={colors.muted}>{t("map.booksAvailable")}</AppText>
                 </View>
               </View>
               {selected.top_genres.length > 0 && (
                 <View style={{ gap: 8 }}>
-                  <AppText variant="label" color={colors.muted}>Popular genres</AppText>
+                  <AppText variant="label" color={colors.muted}>{t("map.popularGenres")}</AppText>
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                     {selected.top_genres.map((g) => (
                       <View key={g} style={styles.genreTag}>
@@ -128,8 +130,12 @@ export default function MapScreen() {
               )}
               <Button
                 testID="explore-people-button"
-                title="Explore people"
-                icon={<ArrowRight size={18} color={colors.onBrandPrimary} weight="bold" />}
+                title={t("map.explorePeople")}
+                icon={
+                  <DirectionalIcon>
+                    <ArrowRight size={18} color={colors.onBrandPrimary} weight="bold" />
+                  </DirectionalIcon>
+                }
                 onPress={() => {
                   sheetRef.current?.close();
                   router.push("/(tabs)/discover");

@@ -6,6 +6,7 @@ import { reloadAppAsync } from "expo";
 import { Component, type ErrorInfo, type PropsWithChildren, useState } from "react";
 import { Platform, Pressable, ScrollView, Text, View } from "react-native";
 
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { makeStyles } from "@/src/theme";
 
 type ErrorBoundaryState = { error: Error | null };
@@ -35,6 +36,7 @@ export class ErrorBoundary extends Component<PropsWithChildren, ErrorBoundarySta
 
 function ErrorFallback({ error, resetError }: { error: Error; resetError: () => void }) {
   const styles = useStyles();
+  const { t } = useLanguage();
   const [showDetails, setShowDetails] = useState(false);
 
   const handleReload = async () => {
@@ -49,8 +51,8 @@ function ErrorFallback({ error, resetError }: { error: Error; resetError: () => 
   return (
     <View style={styles.container} testID="error-fallback">
       <View style={styles.content}>
-        <Text style={styles.title}>Something went wrong</Text>
-        <Text style={styles.message}>Please reload the app to continue.</Text>
+        <Text style={styles.title}>{t("errors.crashTitle")}</Text>
+        <Text style={styles.message}>{t("errors.crashBody")}</Text>
         {__DEV__ ? <Text style={styles.devMessage}>{error.message}</Text> : null}
         <Pressable
           onPress={handleReload}
@@ -58,11 +60,13 @@ function ErrorFallback({ error, resetError }: { error: Error; resetError: () => 
           accessibilityRole="button"
           style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
         >
-          <Text style={styles.buttonText}>Reload app</Text>
+          <Text style={styles.buttonText}>{t("errors.reloadApp")}</Text>
         </Pressable>
         {__DEV__ ? (
           <Pressable onPress={() => setShowDetails((v) => !v)} accessibilityRole="button" hitSlop={8}>
-            <Text style={styles.detailsToggle}>{showDetails ? "Hide details" : "Show details"}</Text>
+            <Text style={styles.detailsToggle}>
+              {showDetails ? t("errors.hideDetails") : t("errors.showDetails")}
+            </Text>
           </Pressable>
         ) : null}
       </View>

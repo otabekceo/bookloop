@@ -5,8 +5,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowsClockwise, CaretRight } from "phosphor-react-native";
 
-import { AppText, Avatar, EmptyState, ExchangingDot, haptic } from "@/src/components/ui";
+import { AppText, Avatar, EmptyState, ExchangingDot, DirectionalIcon, haptic } from "@/src/components/ui";
 import { apiFetch } from "@/src/api";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { makeStyles, useTheme } from "@/src/theme";
 
 type SwapMeta = {
@@ -20,17 +21,27 @@ type SwapMeta = {
 type Buckets = { incoming: SwapMeta[]; outgoing: SwapMeta[]; active: SwapMeta[]; completed: SwapMeta[] };
 
 const TABS = [
-  { key: "incoming", label: "Incoming" },
-  { key: "outgoing", label: "Outgoing" },
-  { key: "active", label: "Active" },
-  { key: "completed", label: "Done" },
+  { key: "incoming", labelKey: "swaps.tabIncoming" },
+  { key: "outgoing", labelKey: "swaps.tabOutgoing" },
+  { key: "active", labelKey: "swaps.tabActive" },
+  { key: "completed", labelKey: "swaps.tabDone" },
 ] as const;
+
+const STATUS_KEYS: Record<string, string> = {
+  pending: "swaps.statusPending",
+  active: "swaps.statusActive",
+  accepted: "swaps.statusActive",
+  completed: "swaps.statusCompleted",
+  declined: "swaps.statusDeclined",
+  cancelled: "swaps.statusCancelled",
+};
 
 export default function Swaps() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { t } = useLanguage();
   const [tab, setTab] = useState<keyof Buckets>("incoming");
 
   const { data, isLoading, isRefetching, refetch } = useQuery({
@@ -56,25 +67,25 @@ export default function Swaps() {
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <AppText variant="display">Swaps</AppText>
+        <AppText variant="display">{t("swaps.title")}</AppText>
       </View>
 
       <View style={styles.tabs}>
-        {TABS.map((t) => {
-          const count = data?.[t.key]?.length || 0;
-          const active = tab === t.key;
+        {TABS.map((tabDef) => {
+          const count = data?.[tabDef.key]?.length || 0;
+          const active = tab === tabDef.key;
           return (
             <Pressable
-              key={t.key}
-              testID={`swap-tab-${t.key}`}
+              key={tabDef.key}
+              testID={`swap-tab-${tabDef.key}`}
               onPress={() => {
                 haptic("selection");
-                setTab(t.key);
+                setTab(tabDef.key);
               }}
               style={[styles.tabItem, active && styles.tabItemActive]}
             >
               <AppText variant="label" color={active ? colors.onSurfaceInverse : colors.muted}>
-                {t.label}
+                {t(tabDef.labelKey)}
                 {count > 0 ? ` ${count}` : ""}
               </AppText>
             </Pressable>
@@ -106,22 +117,24 @@ export default function Swaps() {
                   <AppText variant="heading">{item.other_user.name}</AppText>
                   <View style={[styles.statusPill, { backgroundColor: statusColor(item.status) + "22" }]}>
                     <AppText variant="caption" color={statusColor(item.status)}>
-                      {item.status}
+                      {STATUS_KEYS[item.status] ? t(STATUS_KEYS[item.status]) : item.status}
                     </AppText>
                   </View>
                 </View>
                 <AppText variant="body" color={colors.muted} numberOfLines={1}>
-                  {item.last_message || "Tap to open conversation"}
+                  {item.last_message || t("swaps.tapToOpen")}
                 </AppText>
               </View>
-              <CaretRight size={18} color={colors.muted} />
+              <DirectionalIcon>
+                <CaretRight size={18} color={colors.muted} />
+              </DirectionalIcon>
             </Pressable>
           )}
           ListEmptyComponent={
             <EmptyState
               icon={<ArrowsClockwise size={48} color={colors.muted} weight="light" />}
-              title="Nothing here yet"
-              subtitle="Discover readers nearby and request a swap to get started."
+              title={t("swaps.emptyTitle")}
+              subtitle={t("swaps.emptyBody")}
             />
           }
         />

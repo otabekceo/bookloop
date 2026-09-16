@@ -12,12 +12,14 @@ import { pickImage, uploadWithProgress, openSettings } from "@/src/media";
 import { searchBooks, BookResult } from "@/src/googlebooks";
 import { CONDITIONS, GENRES, LANGUAGES } from "@/src/constants";
 import { makeStyles, useTheme } from "@/src/theme";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 type Mode = "search" | "scan" | "manual";
 
 export default function AddBook() {
   const styles = useStyles();
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const toast = useToast();
@@ -51,7 +53,7 @@ export default function AddBook() {
         if (p.isbn) setIsbn(p.isbn);
         if (p.language) setLanguage(p.language);
         setMode("manual");
-        toast(p.title ? "Book found — review & save" : "Add the details below", "success");
+        toast(p.title ? t("addBook.bookFound") : t("addBook.addDetailsBelow"), "success");
       } catch {}
     }
   }, [params.prefill]);
@@ -63,7 +65,7 @@ export default function AddBook() {
       return;
     }
     setSearching(true);
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         setResults(await searchBooks(query));
       } catch {
@@ -72,7 +74,7 @@ export default function AddBook() {
         setSearching(false);
       }
     }, 450);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [query, mode]);
 
   const selectResult = (r: BookResult) => {
@@ -88,7 +90,7 @@ export default function AddBook() {
   const chooseImage = async (source: "library" | "camera") => {
     haptic("light");
     const picked = await pickImage(source, (blocked) => {
-      toast(blocked ? "Enable access in Settings" : "Permission needed to add a photo", "error");
+      toast(blocked ? t("addBook.enableAccessSettings") : t("addBook.permissionPhoto"), "error");
       if (blocked) openSettings();
     });
     if (!picked) return;
@@ -96,9 +98,9 @@ export default function AddBook() {
     try {
       const up = await uploadWithProgress(picked.uri, (f) => setUploadPct(f));
       setCoverUrl(up.url);
-      toast("Cover uploaded", "success");
+      toast(t("addBook.coverUploaded"), "success");
     } catch (e: any) {
-      toast(e.message || "Upload failed", "error");
+      toast(e.message || t("addBook.uploadFailed"), "error");
     } finally {
       setUploadPct(null);
     }
@@ -106,7 +108,7 @@ export default function AddBook() {
 
   const save = async () => {
     if (!title.trim()) {
-      toast("Please add a title", "error");
+      toast(t("addBook.pleaseAddTitle"), "error");
       return;
     }
     setSaving(true);
@@ -117,10 +119,10 @@ export default function AddBook() {
       });
       haptic("success");
       qc.invalidateQueries({ queryKey: ["myBooks"] });
-      toast("Book added to your shelf", "success");
+      toast(t("addBook.bookAdded"), "success");
       router.back();
     } catch (e: any) {
-      toast(e.message || "Could not save", "error");
+      toast(e.message || t("addBook.couldNotSave"), "error");
     } finally {
       setSaving(false);
     }
@@ -133,16 +135,16 @@ export default function AddBook() {
         <Pressable testID="close-add-book" onPress={() => router.back()} style={styles.iconBtn}>
           <X size={22} color={colors.onSurface} />
         </Pressable>
-        <AppText variant="heading">Add a book</AppText>
+        <AppText variant="heading">{t("addBook.title")}</AppText>
         <View style={{ width: 42 }} />
       </View>
 
       {/* Mode segmented */}
       <View style={styles.segment}>
         {([
-          { k: "search", label: "Search", icon: MagnifyingGlass },
-          { k: "scan", label: "Scan", icon: Barcode },
-          { k: "manual", label: "Manual", icon: PencilSimple },
+          { k: "search", labelKey: "addBook.modeSearch", icon: MagnifyingGlass },
+          { k: "scan", labelKey: "addBook.modeScan", icon: Barcode },
+          { k: "manual", labelKey: "addBook.modeManual", icon: PencilSimple },
         ] as const).map((m) => {
           const active = mode === m.k;
           const Icon = m.icon;
@@ -158,7 +160,7 @@ export default function AddBook() {
             >
               <Icon size={16} color={active ? colors.onSurfaceInverse : colors.muted} weight={active ? "fill" : "regular"} />
               <AppText variant="label" color={active ? colors.onSurfaceInverse : colors.muted}>
-                {m.label}
+                {t(m.labelKey)}
               </AppText>
             </Pressable>
           );
@@ -172,7 +174,7 @@ export default function AddBook() {
               <MagnifyingGlass size={18} color={colors.muted} />
               <Field
                 testID="book-search-input"
-                placeholder="Title, author or ISBN"
+                placeholder={t("addBook.searchPlaceholder")}
                 value={query}
                 onChangeText={setQuery}
                 autoFocus
@@ -191,7 +193,7 @@ export default function AddBook() {
                 <BookCover uri={item.cover_url} width={44} title={item.title} />
                 <View style={{ flex: 1 }}>
                   <AppText variant="label" numberOfLines={2}>{item.title}</AppText>
-                  <AppText variant="caption" color={colors.muted} numberOfLines={1}>{item.author || "Unknown author"}</AppText>
+                  <AppText variant="caption" color={colors.muted} numberOfLines={1}>{item.author || t("common.unknownAuthor")}</AppText>
                 </View>
                 <Plus size={20} color={colors.brandPrimary} weight="bold" />
               </Pressable>
@@ -199,11 +201,11 @@ export default function AddBook() {
             ListEmptyComponent={
               query.trim().length >= 2 && !searching ? (
                 <AppText variant="body" color={colors.muted} style={{ textAlign: "center", marginTop: 30 }}>
-                  No matches. Try Manual entry.
+                  {t("addBook.noMatches")}
                 </AppText>
               ) : (
                 <AppText variant="body" color={colors.muted} style={{ textAlign: "center", marginTop: 30 }}>
-                  Search millions of books to auto-fill the cover & author.
+                  {t("addBook.searchHint")}
                 </AppText>
               )
             }
@@ -216,13 +218,13 @@ export default function AddBook() {
           <View style={styles.scanIcon}>
             <Barcode size={40} color={colors.brandSecondary} weight="light" />
           </View>
-          <AppText variant="title" style={{ textAlign: "center" }}>Scan the barcode</AppText>
+          <AppText variant="title" style={{ textAlign: "center" }}>{t("addBook.scanTitle")}</AppText>
           <AppText variant="body" color={colors.muted} style={{ textAlign: "center", maxWidth: 280 }}>
-            Point your camera at the ISBN barcode on the back cover to add a book instantly.
+            {t("addBook.scanHint")}
           </AppText>
           <Button
             testID="open-scanner"
-            title="Open camera scanner"
+            title={t("addBook.openScanner")}
             icon={<Camera size={18} color={colors.onBrandPrimary} weight="fill" />}
             onPress={() => router.push("/book/scan")}
             style={{ paddingHorizontal: 28 }}
@@ -251,27 +253,27 @@ export default function AddBook() {
               <View style={{ flexDirection: "row", gap: 10 }}>
                 <Pressable testID="cover-gallery" onPress={() => chooseImage("library")} style={styles.smallBtn}>
                   <ImageIcon size={16} color={colors.onSurface} />
-                  <AppText variant="label">Gallery</AppText>
+                  <AppText variant="label">{t("addBook.gallery")}</AppText>
                 </Pressable>
                 {Platform.OS !== "web" && (
                   <Pressable testID="cover-camera" onPress={() => chooseImage("camera")} style={styles.smallBtn}>
                     <Camera size={16} color={colors.onSurface} />
-                    <AppText variant="label">Camera</AppText>
+                    <AppText variant="label">{t("addBook.camera")}</AppText>
                   </Pressable>
                 )}
               </View>
-              <AppText variant="caption" color={colors.muted}>No cover? We'll create a nice one for you.</AppText>
+              <AppText variant="caption" color={colors.muted}>{t("addBook.coverHint")}</AppText>
             </View>
 
-            <Field testID="title-input" label="Title" placeholder="e.g. Atomic Habits" value={title} onChangeText={setTitle} onSurface />
-            <Field testID="author-input" label="Author" placeholder="e.g. James Clear" value={author} onChangeText={setAuthor} onSurface />
+            <Field testID="title-input" label={t("bookDetail.titleLabel")} placeholder={t("addBook.titlePlaceholder")} value={title} onChangeText={setTitle} onSurface />
+            <Field testID="author-input" label={t("bookDetail.authorLabel")} placeholder={t("addBook.authorPlaceholder")} value={author} onChangeText={setAuthor} onSurface />
 
-            <ChipGroup label="Condition" options={CONDITIONS} value={condition} onChange={setCondition} idPrefix="condition" />
-            <ChipGroup label="Genre" options={GENRES} value={genre} onChange={setGenre} idPrefix="add-genre" />
-            <ChipGroup label="Language" options={LANGUAGES} value={language} onChange={setLanguage} idPrefix="add-lang" />
+            <ChipGroup label={t("bookDetail.conditionLabel")} options={CONDITIONS} value={condition} onChange={setCondition} idPrefix="condition" />
+            <ChipGroup label={t("bookDetail.genreLabel")} options={GENRES} value={genre} onChange={setGenre} idPrefix="add-genre" />
+            <ChipGroup label={t("bookDetail.languageLabel")} options={LANGUAGES} value={language} onChange={setLanguage} idPrefix="add-lang" />
           </KeyboardAwareScrollView>
           <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
-            <Button testID="save-book-button" title="Add to my shelf" onPress={save} loading={saving} icon={<Plus size={18} color={colors.onBrandPrimary} weight="bold" />} />
+            <Button testID="save-book-button" title={t("addBook.addToShelf")} onPress={save} loading={saving} icon={<Plus size={18} color={colors.onBrandPrimary} weight="bold" />} />
           </View>
         </>
       )}

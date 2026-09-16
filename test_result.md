@@ -101,7 +101,7 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
-user_problem_statement: "BookLoop — local book-exchange social marketplace. Iteration 3: Genre Match (Discover top-matches strip + shared-genre highlights), Book Wishlist (soft preferences: genres/languages/reading interests → nearby books & readers; owner demand nudges), Swap Streak badges (First Loop 1 / Loop Regular 3 / Bookworm 5 / Loop Legend 10)."
+user_problem_statement: "BookLoop — local book-exchange social marketplace. Iteration 4: full multilingual support (Uzbek, English, Russian, Italian, Arabic) with first-time language selection, dual persistence (AsyncStorage + server preferred_language), change-from-Settings, complete i18n key architecture (no hard-coded strings), and full Arabic RTL support (mirrored layout/icons, right-aligned text, Noto Sans Arabic font, locale-aware dates/numbers)."
 
 backend:
   - task: "Genre match scoring in GET /api/discover/people (shared_genres, match_score, top_matches) and GET /api/users/{id}"
@@ -197,20 +197,23 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "3.0"
-  test_sequence: 3
+  version: "4.0"
+  test_sequence: 4
   run_ui: true
 
 test_plan:
   current_focus:
-    - "Genre match scoring"
-    - "Wishlist endpoint + screen"
-    - "Badges + swap complete unlock"
-    - "Demand nudges"
+    - "First-time language selection screen (5 languages)"
+    - "Language persistence (AsyncStorage + server preferred_language)"
+    - "Change language from Profile → Language"
+    - "Arabic RTL layout + mirrored directional icons + right-aligned text"
+    - "Arabic font (Noto Sans Arabic) applied across screens"
+    - "Locale-aware date/number formatting"
+    - "No untranslated strings in main flows (all 5 languages)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
   - agent: "main"
-    message: "Iteration 3 implemented. Backend verified manually via python requests (login test@bookloop.com/test1234). Frontend smoke-tested on web preview. Please run backend API tests + frontend E2E for the new features."
+    message: "Iteration 4 (multilingual + Arabic RTL) implemented. i18next/react-i18next with 335 keys per locale, verified in parity across en/uz/ru/it/ar. First-time picker at app/(auth)/language.tsx; change later via Profile → /settings/language. Persistence: AsyncStorage 'bookloop.language' + server 'preferred_language' (ProfileUpdate + public_user). RTL via I18nManager + useRTL() + DirectionalIcon; Arabic font via fontsForLanguage(). npx tsc --noEmit shows only 5 pre-existing unrelated errors. Please run backend API tests (preferred_language round-trip) + frontend E2E across all 5 languages, including an Arabic RTL pass (note: direction change requires an app reload)."

@@ -17,8 +17,9 @@ import * as Haptics from "expo-haptics";
 import { BookOpen, Star } from "phosphor-react-native";
 
 import { makeStyles, useTheme } from "@/src/theme";
-import { FONTS } from "@/src/typography";
+import { FONTS, fontsForLanguage, type FontRole } from "@/src/typography";
 import { resolveImage } from "@/src/api";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 export function haptic(kind: "light" | "success" | "selection" = "light") {
   try {
@@ -28,19 +29,51 @@ export function haptic(kind: "light" | "success" | "selection" = "light") {
   } catch {}
 }
 
+/**
+ * True when the active language renders right-to-left (Arabic). Use this to
+ * mirror directional chrome (back arrows, chevrons, progress) while leaving
+ * non-directional icons untouched.
+ */
+export function useRTL(): boolean {
+  return useLanguage().isRTL;
+}
+
+/**
+ * Wraps a directional icon and mirrors it horizontally under RTL. Only use for
+ * icons whose meaning is tied to reading direction (back/forward arrows,
+ * chevrons, next/previous). Do NOT wrap icons like stars, hearts, cameras.
+ */
+export function DirectionalIcon({ children, mirror = true }: { children: React.ReactNode; mirror?: boolean }) {
+  const isRTL = useRTL();
+  if (!isRTL || !mirror) return <>{children}</>;
+  return <View style={{ transform: [{ scaleX: -1 }] }}>{children}</View>;
+}
+
 // ---------------------------------------------------------------------------
 // AppText
 // ---------------------------------------------------------------------------
 type Variant = "display" | "title" | "heading" | "body" | "label" | "caption" | "button";
 
-const variantStyle: Record<Variant, { fontFamily: string; fontSize: number; lineHeight: number }> = {
-  display: { fontFamily: FONTS.display, fontSize: 30, lineHeight: 36 },
-  title: { fontFamily: FONTS.displaySemi, fontSize: 22, lineHeight: 28 },
-  heading: { fontFamily: FONTS.bold, fontSize: 16, lineHeight: 22 },
-  body: { fontFamily: FONTS.regular, fontSize: 14, lineHeight: 20 },
-  label: { fontFamily: FONTS.medium, fontSize: 13, lineHeight: 18 },
-  caption: { fontFamily: FONTS.regular, fontSize: 12, lineHeight: 16 },
-  button: { fontFamily: FONTS.bold, fontSize: 15, lineHeight: 20 },
+// Font role per variant — resolved against the active language's font map so
+// Arabic swaps in Noto Sans Arabic while other languages keep Fraunces + DM Sans.
+const variantFontRole: Record<Variant, FontRole> = {
+  display: "display",
+  title: "displaySemi",
+  heading: "bold",
+  body: "regular",
+  label: "medium",
+  caption: "regular",
+  button: "bold",
+};
+
+const variantMetrics: Record<Variant, { fontSize: number; lineHeight: number }> = {
+  display: { fontSize: 30, lineHeight: 36 },
+  title: { fontSize: 22, lineHeight: 28 },
+  heading: { fontSize: 16, lineHeight: 22 },
+  body: { fontSize: 14, lineHeight: 20 },
+  label: { fontSize: 13, lineHeight: 18 },
+  caption: { fontSize: 12, lineHeight: 16 },
+  button: { fontSize: 15, lineHeight: 20 },
 };
 
 export function AppText({
@@ -51,10 +84,20 @@ export function AppText({
   ...rest
 }: TextProps & { variant?: Variant; color?: string }) {
   const { colors } = useTheme();
+  const { language, isRTL } = useLanguage();
+  const fonts = fontsForLanguage(language);
+  const fontFamily = fonts[variantFontRole[variant]];
   return (
     <Text
       {...rest}
-      style={[variantStyle[variant], { color: color || colors.onSurface }, style as StyleProp<TextStyle>]}
+      style={[
+        variantMetrics[variant],
+        { fontFamily, color: color || colors.onSurface },
+        // Arabic reads right-to-left: default text alignment follows the script
+        // unless a caller explicitly overrides it.
+        isRTL ? { textAlign: "right", writingDirection: "rtl" } : null,
+        style as StyleProp<TextStyle>,
+      ]}
     >
       {children}
     </Text>
@@ -258,11 +301,12 @@ export function Stars({ value, size = 14 }: { value: number; size?: number }) {
 
 export function RatingPill({ rating, count }: { rating: number; count?: number }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
       <Star size={13} color={colors.star} weight="fill" />
       <AppText variant="label" color={colors.onSurface}>
-        {rating > 0 ? rating.toFixed(1) : "New"}
+        {rating > 0 ? rating.toFixed(1) : t("common.new")}
         {count ? ` (${count})` : ""}
       </AppText>
     </View>
@@ -300,6 +344,8 @@ export function BookCover({
   style?: StyleProp<ViewStyle>;
 }) {
   const [failed, setFailed] = useState(false);
+  const { language } = useLanguage();
+  const fonts = fontsForLanguage(language);
   const src = resolveImage(uri);
   const height = width * 1.5;
 
@@ -330,7 +376,7 @@ export function BookCover({
       {showTitle ? (
         <Text
           numberOfLines={4}
-          style={{ color: "#FFFFFF", fontFamily: FONTS.displaySemi, fontSize: Math.max(11, width * 0.11), lineHeight: Math.max(14, width * 0.14) }}
+          style={{ color: "#FFFFFF", fontFamily: fonts.displaySemi, fontSize: Math.max(11, width * 0.11), lineHeight: Math.max(14, width * 0.14) }}
         >
           {title}
         </Text>
@@ -350,6 +396,8 @@ export function BookCover({
 // ---------------------------------------------------------------------------
 export function StatusBadge({ status }: { status: string }) {
   const { colors } = useTheme();
+  const { language } = useLanguage();
+  const fonts = fontsForLanguage(language);
   const map: Record<string, { bg: string; fg: string }> = {
     Available: { bg: colors.sageSoft, fg: colors.brandSecondary },
     Reserved: { bg: colors.brandTertiary, fg: colors.brandPrimary },
@@ -358,7 +406,7 @@ export function StatusBadge({ status }: { status: string }) {
   const c = map[status] || map.Available;
   return (
     <View style={{ backgroundColor: c.bg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, alignSelf: "flex-start" }}>
-      <AppText variant="caption" color={c.fg} style={{ fontFamily: FONTS.bold }}>
+      <AppText variant="caption" color={c.fg} style={{ fontFamily: fonts.bold }}>
         {status}
       </AppText>
     </View>
@@ -367,6 +415,7 @@ export function StatusBadge({ status }: { status: string }) {
 
 export function ExchangingDot({ active, label }: { active: boolean; label?: boolean }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
       <View
@@ -374,7 +423,7 @@ export function ExchangingDot({ active, label }: { active: boolean; label?: bool
       />
       {label && (
         <AppText variant="caption" color={active ? colors.brandSecondary : colors.muted}>
-          {active ? "Exchanging" : "Paused"}
+          {active ? t("status.exchanging") : t("status.paused")}
         </AppText>
       )}
     </View>
@@ -479,6 +528,8 @@ export function Field({
   ...rest
 }: TextInputProps & { label?: string; onSurface?: boolean }) {
   const { colors } = useTheme();
+  const { language, isRTL } = useLanguage();
+  const fonts = fontsForLanguage(language);
   return (
     <View style={{ gap: 6 }}>
       {label && (
@@ -497,9 +548,11 @@ export function Field({
             borderColor: colors.border,
             paddingHorizontal: 14,
             paddingVertical: 14,
-            fontFamily: FONTS.regular,
+            fontFamily: fonts.regular,
             fontSize: 15,
             color: colors.onSurface,
+            textAlign: isRTL ? "right" : "left",
+            writingDirection: isRTL ? "rtl" : "ltr",
           },
           style,
         ]}

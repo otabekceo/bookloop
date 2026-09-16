@@ -6,15 +6,17 @@ import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Trash, MapPin, ArrowsClockwise, Fire } from "phosphor-react-native";
 
-import { AppText, Avatar, Button, Field, Chip, BookCover, StatusBadge, RatingPill, haptic, useToast } from "@/src/components/ui";
+import { AppText, Avatar, Button, Field, Chip, BookCover, StatusBadge, RatingPill, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
 import { apiFetch } from "@/src/api";
 import { CONDITIONS, GENRES, LANGUAGES, BOOK_STATUSES } from "@/src/constants";
 import { makeStyles, useTheme } from "@/src/theme";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 export default function BookDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const styles = useStyles();
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const toast = useToast();
@@ -50,10 +52,10 @@ export default function BookDetail() {
       });
       haptic("success");
       qc.invalidateQueries({ queryKey: ["myBooks"] });
-      toast("Saved", "success");
+      toast(t("bookDetail.saved"), "success");
       router.back();
     } catch (e: any) {
-      toast(e.message || "Could not save", "error");
+      toast(e.message || t("bookDetail.couldNotSave"), "error");
     } finally {
       setSaving(false);
     }
@@ -63,10 +65,10 @@ export default function BookDetail() {
     try {
       await apiFetch(`/api/books/${id}`, { method: "DELETE" });
       qc.invalidateQueries({ queryKey: ["myBooks"] });
-      toast("Book removed", "success");
+      toast(t("bookDetail.bookRemoved"), "success");
       router.back();
     } catch {
-      toast("Could not delete", "error");
+      toast(t("bookDetail.couldNotDelete"), "error");
     }
   };
 
@@ -79,7 +81,7 @@ export default function BookDetail() {
       });
       router.push(`/swap/${res.swap.id}`);
     } catch (e: any) {
-      toast(e.message || "Could not start swap", "error");
+      toast(e.message || t("bookDetail.couldNotStartSwap"), "error");
     }
   };
 
@@ -88,9 +90,11 @@ export default function BookDetail() {
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <Pressable testID="back-button" onPress={() => router.back()} style={styles.iconBtn}>
-          <ArrowLeft size={22} color={colors.onSurface} />
+          <DirectionalIcon>
+            <ArrowLeft size={22} color={colors.onSurface} />
+          </DirectionalIcon>
         </Pressable>
-        <AppText variant="heading">{isOwner ? "Edit book" : "Book"}</AppText>
+        <AppText variant="heading">{isOwner ? t("bookDetail.editBook") : t("bookDetail.title")}</AppText>
         {isOwner ? (
           <Pressable testID="delete-book" onPress={remove} style={styles.iconBtn}>
             <Trash size={20} color={colors.error} />
@@ -111,20 +115,20 @@ export default function BookDetail() {
                 <View testID="wanted-by" style={styles.wantedPill}>
                   <Fire size={14} color={colors.onBrandTertiary} weight="fill" />
                   <AppText variant="caption" color={colors.onBrandTertiary}>
-                    {data.wanted_by} {data.wanted_by === 1 ? "reader" : "readers"} nearby {data.wanted_by === 1 ? "is" : "are"} looking for {form.genre} books
+                    {t("bookDetail.wantedBy", { count: data.wanted_by, genre: form.genre })}
                   </AppText>
                 </View>
               )}
             </View>
-            <Field label="Title" value={form.title} onChangeText={(t) => setForm({ ...form, title: t })} onSurface testID="edit-title" />
-            <Field label="Author" value={form.author} onChangeText={(t) => setForm({ ...form, author: t })} onSurface testID="edit-author" />
-            <EditGroup label="Status" options={BOOK_STATUSES} value={form.status} onChange={(v) => setForm({ ...form, status: v })} />
-            <EditGroup label="Condition" options={CONDITIONS} value={form.condition} onChange={(v) => setForm({ ...form, condition: v })} />
-            <EditGroup label="Genre" options={GENRES} value={form.genre} onChange={(v) => setForm({ ...form, genre: v })} />
-            <EditGroup label="Language" options={LANGUAGES} value={form.language} onChange={(v) => setForm({ ...form, language: v })} />
+            <Field label={t("bookDetail.titleLabel")} value={form.title} onChangeText={(v) => setForm({ ...form, title: v })} onSurface testID="edit-title" />
+            <Field label={t("bookDetail.authorLabel")} value={form.author} onChangeText={(v) => setForm({ ...form, author: v })} onSurface testID="edit-author" />
+            <EditGroup label={t("bookDetail.statusLabel")} options={BOOK_STATUSES} value={form.status} onChange={(v) => setForm({ ...form, status: v })} />
+            <EditGroup label={t("bookDetail.conditionLabel")} options={CONDITIONS} value={form.condition} onChange={(v) => setForm({ ...form, condition: v })} />
+            <EditGroup label={t("bookDetail.genreLabel")} options={GENRES} value={form.genre} onChange={(v) => setForm({ ...form, genre: v })} />
+            <EditGroup label={t("bookDetail.languageLabel")} options={LANGUAGES} value={form.language} onChange={(v) => setForm({ ...form, language: v })} />
           </KeyboardAwareScrollView>
           <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
-            <Button testID="save-book-edit" title="Save changes" onPress={save} loading={saving} />
+            <Button testID="save-book-edit" title={t("bookDetail.saveChanges")} onPress={save} loading={saving} />
           </View>
         </>
       ) : (
@@ -171,7 +175,7 @@ export default function BookDetail() {
           <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
             <Button
               testID="book-request-swap"
-              title={`Request swap with ${data.owner.name?.split(" ")[0]}`}
+              title={t("bookDetail.requestSwapWith", { name: data.owner.name?.split(" ")[0] })}
               icon={<ArrowsClockwise size={18} color={colors.onBrandPrimary} weight="bold" />}
               onPress={startSwap}
             />

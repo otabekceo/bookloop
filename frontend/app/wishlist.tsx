@@ -5,12 +5,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Sparkle, MapPin, CaretDown, CaretUp } from "phosphor-react-native";
 
-import { AppText, Button, Chip, Avatar, RatingPill, haptic, useToast } from "@/src/components/ui";
+import { AppText, Button, Chip, Avatar, RatingPill, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
 import { BookTile, Book, Person } from "@/src/components/cards";
 import { useAuth } from "@/src/auth";
 import { apiFetch } from "@/src/api";
 import { GENRES, LANGUAGES, READING_INTERESTS } from "@/src/constants";
 import { makeStyles, useTheme } from "@/src/theme";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 type WishBook = Book & { owner_avatar?: string | null; owner_exchanging?: boolean; distance_km: number; match_score: number };
 type WishData = {
@@ -27,6 +28,7 @@ export default function Wishlist() {
   const router = useRouter();
   const toast = useToast();
   const qc = useQueryClient();
+  const { t } = useLanguage();
   const { user, refreshUser } = useAuth();
   const { width } = useWindowDimensions();
   const tile = (width - 40 - 24) / 2.4;
@@ -57,7 +59,7 @@ export default function Wishlist() {
 
   const save = async () => {
     if (genres.length === 0) {
-      toast("Pick at least one genre", "error");
+      toast(t("wishlist.pickAtLeastOneGenre"), "error");
       return;
     }
     setSaving(true);
@@ -68,10 +70,10 @@ export default function Wishlist() {
       qc.invalidateQueries({ queryKey: ["people"] });
       qc.invalidateQueries({ queryKey: ["bookDemand"] });
       haptic("success");
-      toast("Wishlist updated", "success");
+      toast(t("wishlist.wishlistUpdated"), "success");
       setEditing(false);
     } catch (e: any) {
-      toast(e.message || "Could not save", "error");
+      toast(e.message || t("wishlist.couldNotSave"), "error");
     } finally {
       setSaving(false);
     }
@@ -85,17 +87,19 @@ export default function Wishlist() {
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <Pressable testID="back-button" onPress={() => router.back()} style={styles.iconBtn}>
-          <ArrowLeft size={22} color={colors.onSurface} />
+          <DirectionalIcon>
+            <ArrowLeft size={22} color={colors.onSurface} />
+          </DirectionalIcon>
         </Pressable>
-        <AppText variant="heading">Wishlist</AppText>
+        <AppText variant="heading">{t("wishlist.title")}</AppText>
         <View style={{ width: 42 }} />
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 40, gap: 20 }} showsVerticalScrollIndicator={false}>
         <View>
-          <AppText variant="display">What are you{"\n"}hunting for?</AppText>
+          <AppText variant="display">{t("wishlist.heading")}</AppText>
           <AppText variant="body" color={colors.muted} style={{ marginTop: 6 }}>
-            Tell us your genres, languages and interests. We'll surface nearby readers and books that fit — no exact titles needed.
+            {t("wishlist.subtitle")}
           </AppText>
         </View>
 
@@ -104,7 +108,7 @@ export default function Wishlist() {
           <Pressable testID="toggle-preferences" onPress={() => setEditing((v) => !v)} style={styles.cardHead}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
               <Sparkle size={18} color={colors.brandPrimary} weight="fill" />
-              <AppText variant="heading">Your preferences</AppText>
+              <AppText variant="heading">{t("wishlist.yourPreferences")}</AppText>
             </View>
             {editing ? <CaretUp size={18} color={colors.muted} weight="bold" /> : <CaretDown size={18} color={colors.muted} weight="bold" />}
           </Pressable>
@@ -129,10 +133,10 @@ export default function Wishlist() {
             </View>
           ) : (
             <View style={{ gap: 16 }}>
-              <PrefGroup label="Genres you love" options={GENRES} value={genres} onToggle={(v) => toggle(genres, setGenres, v)} idPrefix="wish-genre" />
-              <PrefGroup label="Languages" options={LANGUAGES} value={languages} onToggle={(v) => toggle(languages, setLanguages, v)} idPrefix="wish-lang" />
-              <PrefGroup label="Reading interests" options={READING_INTERESTS} value={interests} onToggle={(v) => toggle(interests, setInterests, v)} idPrefix="wish-interest" />
-              <Button testID="save-wishlist" title="Save wishlist" onPress={save} loading={saving} disabled={!dirty && (user?.genres?.length || 0) > 0} />
+              <PrefGroup label={t("wishlist.genresYouLove")} options={GENRES} value={genres} onToggle={(v) => toggle(genres, setGenres, v)} idPrefix="wish-genre" />
+              <PrefGroup label={t("wishlist.languages")} options={LANGUAGES} value={languages} onToggle={(v) => toggle(languages, setLanguages, v)} idPrefix="wish-lang" />
+              <PrefGroup label={t("wishlist.readingInterests")} options={READING_INTERESTS} value={interests} onToggle={(v) => toggle(interests, setInterests, v)} idPrefix="wish-interest" />
+              <Button testID="save-wishlist" title={t("wishlist.saveWishlist")} onPress={save} loading={saving} disabled={!dirty && (user?.genres?.length || 0) > 0} />
             </View>
           )}
         </View>
@@ -141,13 +145,13 @@ export default function Wishlist() {
           <ActivityIndicator color={colors.brandPrimary} style={{ marginTop: 20 }} />
         ) : data?.needs_setup ? (
           <AppText variant="body" color={colors.muted} style={{ textAlign: "center" }}>
-            Pick a few genres above to see books and readers for you.
+            {t("wishlist.pickGenresHint")}
           </AppText>
         ) : (
           <>
             {/* Books for you */}
             <View style={{ gap: 10 }}>
-              <AppText variant="heading">Books for you nearby ({books.length})</AppText>
+              <AppText variant="heading">{t("wishlist.booksForYou", { count: books.length })}</AppText>
               {books.length > 0 ? (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 14, paddingRight: 20 }}>
                   {books.map((b) => (
@@ -156,7 +160,7 @@ export default function Wishlist() {
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
                         <MapPin size={11} color={colors.brandSecondary} weight="fill" />
                         <AppText variant="caption" color={colors.muted} style={{ fontSize: 11 }}>
-                          {b.distance_km < 999 ? `${b.distance_km} km` : "nearby"} · {b.genre}
+                          {b.distance_km < 999 ? `${b.distance_km} km` : t("common.nearby")} · {b.genre}
                         </AppText>
                       </View>
                     </View>
@@ -164,14 +168,14 @@ export default function Wishlist() {
                 </ScrollView>
               ) : (
                 <AppText variant="body" color={colors.muted}>
-                  No matching books nearby yet. Invite friends who read what you love!
+                  {t("wishlist.noMatchingBooks")}
                 </AppText>
               )}
             </View>
 
             {/* Readers for you */}
             <View style={{ gap: 10 }}>
-              <AppText variant="heading">Readers for you ({people.length})</AppText>
+              <AppText variant="heading">{t("wishlist.readersForYou", { count: people.length })}</AppText>
               {people.length > 0 ? (
                 people.map((p) => (
                   <Pressable
@@ -190,18 +194,18 @@ export default function Wishlist() {
                         <RatingPill rating={p.rating} count={p.rating_count} />
                       </View>
                       <AppText variant="caption" color={colors.brandPrimary} numberOfLines={1}>
-                        {[...(p.shared_genres || []), ...(p.shared_interests || [])].slice(0, 3).join(" · ") || "Shares your languages"}
+                        {[...(p.shared_genres || []), ...(p.shared_interests || [])].slice(0, 3).join(" · ") || t("wishlist.sharesYourLanguages")}
                       </AppText>
                       <AppText variant="caption" color={colors.muted}>
-                        {p.distance_km < 999 ? `${p.distance_km} km` : p.neighborhood} · {p.available_count || 0} books for you
-                        {p.is_exchanging ? " · exchanging now" : ""}
+                        {p.distance_km < 999 ? `${p.distance_km} km` : p.neighborhood} · {t("wishlist.booksForYouShort", { count: p.available_count || 0 })}
+                        {p.is_exchanging ? ` ${t("wishlist.exchangingNow")}` : ""}
                       </AppText>
                     </View>
                   </Pressable>
                 ))
               ) : (
                 <AppText variant="body" color={colors.muted}>
-                  No matching readers nearby yet.
+                  {t("wishlist.noMatchingReaders")}
                 </AppText>
               )}
             </View>

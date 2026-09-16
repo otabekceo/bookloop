@@ -5,13 +5,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import * as Clipboard from "expo-clipboard";
-import { MapPin, PencilSimple, SignOut, UserPlus, Copy, ShareNetwork, Sparkle, CaretRight } from "phosphor-react-native";
+import { MapPin, PencilSimple, SignOut, UserPlus, Copy, ShareNetwork, Sparkle, CaretRight, Translate } from "phosphor-react-native";
 
-import { AppText, Avatar, Button, RatingPill, haptic, useToast } from "@/src/components/ui";
+import { AppText, Avatar, Button, RatingPill, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
 import { BookTile, Book } from "@/src/components/cards";
 import { BadgeGrid } from "@/src/components/badges";
 import { useAuth } from "@/src/auth";
 import { apiFetch } from "@/src/api";
+import { useLanguage, useLanguageMeta } from "@/src/i18n/LanguageProvider";
 import { makeStyles, useTheme } from "@/src/theme";
 
 export default function Profile() {
@@ -20,6 +21,8 @@ export default function Profile() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, logout, refreshUser } = useAuth();
+  const { t } = useLanguage();
+  const meta = useLanguageMeta();
   const toast = useToast();
   const qc = useQueryClient();
   const { width } = useWindowDimensions();
@@ -49,9 +52,9 @@ export default function Profile() {
       await refreshUser();
       qc.invalidateQueries({ queryKey: ["people"] });
       qc.invalidateQueries({ queryKey: ["clusters"] });
-      toast(next ? "You're now exchanging" : "Exchanging paused", "success");
+      toast(next ? t("profile.nowExchanging") : t("profile.exchangingPaused"), "success");
     } catch {
-      toast("Could not update", "error");
+      toast(t("profile.couldNotUpdate"), "error");
     } finally {
       setSaving(false);
     }
@@ -70,7 +73,7 @@ export default function Profile() {
   const copyInvite = async () => {
     haptic("selection");
     await Clipboard.setStringAsync(inviteLink);
-    toast("Invite link copied", "success");
+    toast(t("profile.inviteCopied"), "success");
   };
 
   return (
@@ -105,21 +108,21 @@ export default function Profile() {
         <View style={styles.statCell}>
           <RatingPill rating={user.rating} />
           <AppText variant="caption" color={colors.muted}>
-            {user.rating_count} reviews
+            {t("profile.reviewsCount", { count: user.rating_count })}
           </AppText>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCell}>
           <AppText variant="heading">{user.swaps_count}</AppText>
           <AppText variant="caption" color={colors.muted}>
-            swaps done
+            {t("profile.swapsDone")}
           </AppText>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCell}>
           <AppText variant="heading">{booksData?.books?.length ?? 0}</AppText>
           <AppText variant="caption" color={colors.muted}>
-            books
+            {t("profile.booksCount")}
           </AppText>
         </View>
       </View>
@@ -133,9 +136,9 @@ export default function Profile() {
       {/* Exchanging toggle */}
       <Pressable testID="exchanging-switch" onPress={toggleExchanging} disabled={saving} style={styles.toggleCard}>
         <View style={{ flex: 1 }}>
-          <AppText variant="heading">Currently exchanging</AppText>
+          <AppText variant="heading">{t("profile.currentlyExchanging")}</AppText>
           <AppText variant="caption" color={colors.muted}>
-            {user.is_exchanging ? "Visible to readers nearby" : "Hidden from discovery"}
+            {user.is_exchanging ? t("profile.visibleNearby") : t("profile.hiddenFromDiscovery")}
           </AppText>
         </View>
         <View style={[styles.switch, user.is_exchanging && styles.switchOn]}>
@@ -149,16 +152,16 @@ export default function Profile() {
           <UserPlus size={22} color={colors.onBrandSecondary} weight="fill" />
         </View>
         <View style={{ flex: 1 }}>
-          <AppText variant="heading">Invite friends</AppText>
+          <AppText variant="heading">{t("profile.inviteTitle")}</AppText>
           <AppText variant="caption" color={colors.muted}>
-            Bring your reading group into your local loop
+            {t("profile.inviteBody")}
           </AppText>
         </View>
       </View>
       <View style={styles.inviteBtnRow}>
         <Pressable testID="share-invite" onPress={shareInvite} style={styles.inviteShare}>
           <ShareNetwork size={18} color={colors.onBrandPrimary} weight="fill" />
-          <AppText variant="button" color={colors.onBrandPrimary}>Share invite</AppText>
+          <AppText variant="button" color={colors.onBrandPrimary}>{t("profile.shareInvite")}</AppText>
         </Pressable>
         <Pressable testID="copy-invite" onPress={copyInvite} style={styles.inviteCopy}>
           <Copy size={18} color={colors.onSurface} />
@@ -166,7 +169,7 @@ export default function Profile() {
       </View>
 
       {/* Swap badges */}
-      <Section title="Swap badges">
+      <Section title={t("profile.swapBadges")}>
         <BadgeGrid badges={user.badges || []} swapsCount={user.swaps_count} />
       </Section>
 
@@ -176,18 +179,20 @@ export default function Profile() {
           <Sparkle size={22} color={colors.onBrandPrimary} weight="fill" />
         </View>
         <View style={{ flex: 1 }}>
-          <AppText variant="heading">My wishlist</AppText>
+          <AppText variant="heading">{t("profile.myWishlist")}</AppText>
           <AppText variant="caption" color={colors.muted}>
             {user.genres.length > 0
-              ? `${user.genres.length} genres · ${user.reading_interests?.length || 0} interests · see books for you`
-              : "Tell us what you're hunting for"}
+              ? `${t("common.genreCount", { count: user.genres.length })} · ${user.reading_interests?.length || 0} · ${t("common.seeAll")}`
+              : t("wishlist.subtitle")}
           </AppText>
         </View>
-        <CaretRight size={18} color={colors.muted} weight="bold" />
+        <DirectionalIcon>
+          <CaretRight size={18} color={colors.muted} weight="bold" />
+        </DirectionalIcon>
       </Pressable>
 
       {/* Genres */}
-      <Section title="Interested in">
+      <Section title={t("profile.interestedIn")}>
         {user.genres.length > 0 ? (
           <View style={styles.tagWrap}>
             {user.genres.map((g) => (
@@ -200,14 +205,14 @@ export default function Profile() {
           </View>
         ) : (
           <AppText variant="body" color={colors.muted}>
-            Add genres you love from Edit profile.
+            {t("profile.addGenresHint")}
           </AppText>
         )}
       </Section>
 
       {/* Reading interests */}
       {(user.reading_interests?.length || 0) > 0 && (
-        <Section title="Reading interests">
+        <Section title={t("profile.readingInterests")}>
           <View style={styles.tagWrap}>
             {user.reading_interests.map((i) => (
               <View key={i} style={[styles.tag, { backgroundColor: colors.surfaceTertiary }]}>
@@ -221,7 +226,7 @@ export default function Profile() {
       )}
 
       {/* Languages */}
-      <Section title="Languages">
+      <Section title={t("profile.languages")}>
         <View style={styles.tagWrap}>
           {user.languages.map((l) => (
             <View key={l} style={[styles.tag, { backgroundColor: colors.sageSoft }]}>
@@ -234,7 +239,7 @@ export default function Profile() {
       </Section>
 
       {/* My books */}
-      <Section title="My books" onSeeAll={() => router.push("/(tabs)/books")}>
+      <Section title={t("profile.myBooks")} onSeeAll={() => router.push("/(tabs)/books")}>
         {books.length > 0 ? (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
             {books.map((b) => (
@@ -242,9 +247,25 @@ export default function Profile() {
             ))}
           </View>
         ) : (
-          <Button title="Add a book" variant="outline" onPress={() => router.push("/book/add")} testID="profile-add-book" />
+          <Button title={t("profile.addBook")} variant="outline" onPress={() => router.push("/book/add")} testID="profile-add-book" />
         )}
       </Section>
+
+      {/* App language */}
+      <Pressable testID="language-settings" onPress={() => router.push("/settings/language")} style={styles.langCard}>
+        <View style={styles.langIcon}>
+          <Translate size={22} color={colors.onBrandPrimary} weight="fill" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <AppText variant="heading">{t("common.language")}</AppText>
+          <AppText variant="caption" color={colors.muted}>
+            {meta.nativeName}
+          </AppText>
+        </View>
+        <DirectionalIcon>
+          <CaretRight size={18} color={colors.muted} weight="bold" />
+        </DirectionalIcon>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -252,6 +273,7 @@ export default function Profile() {
 function Section({ title, children, onSeeAll }: { title: string; children: React.ReactNode; onSeeAll?: () => void }) {
   const styles = useStyles();
   const { colors } = useTheme();
+  const { t } = useLanguage();
   return (
     <View style={styles.section}>
       <View style={styles.sectionHead}>
@@ -259,7 +281,7 @@ function Section({ title, children, onSeeAll }: { title: string; children: React
         {onSeeAll && (
           <Pressable onPress={onSeeAll}>
             <AppText variant="label" color={colors.brandPrimary}>
-              See all
+              {t("profile.seeAll")}
             </AppText>
           </Pressable>
         )}
@@ -292,6 +314,8 @@ const useStyles = makeStyles((colors) => ({
   sectionHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   wishCard: { flexDirection: "row", alignItems: "center", gap: 14, marginHorizontal: 20, marginTop: 24, backgroundColor: colors.brandTertiary, borderRadius: 18, padding: 16 },
   wishIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" },
+  langCard: { flexDirection: "row", alignItems: "center", gap: 14, marginHorizontal: 20, marginTop: 24, backgroundColor: colors.surfaceSecondary, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: colors.border },
+  langIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" },
   tagWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   tag: { backgroundColor: colors.brandTertiary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999 },
 }));

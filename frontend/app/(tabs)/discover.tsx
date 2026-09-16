@@ -6,14 +6,15 @@ import { useQuery } from "@tanstack/react-query";
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from "@gorhom/bottom-sheet";
 import { MagnifyingGlass, SlidersHorizontal, Bell, BookOpen, Sparkle, ArrowRight } from "phosphor-react-native";
 
-import { AppText, Chip, ChipRow, Field, Button, EmptyState, haptic } from "@/src/components/ui";
+import { AppText, Chip, ChipRow, Field, Button, EmptyState, DirectionalIcon, haptic } from "@/src/components/ui";
 import { Logo } from "@/src/components/Logo";
 import { PersonCard, MatchCard, BookTile, Person, Book } from "@/src/components/cards";
 import { apiFetch } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { GENRES, LANGUAGES, DISTANCES } from "@/src/constants";
 import { makeStyles, useTheme } from "@/src/theme";
-import { FONTS } from "@/src/typography";
+import { fontsForLanguage } from "@/src/typography";
 
 export default function Discover() {
   const styles = useStyles();
@@ -21,6 +22,8 @@ export default function Discover() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
+  const { t, language: uiLanguage } = useLanguage();
+  const uiFonts = fontsForLanguage(uiLanguage);
   const { width } = useWindowDimensions();
   const col = (width - 40 - 14) / 2;
 
@@ -78,10 +81,10 @@ export default function Discover() {
       <View style={styles.matches} testID="genre-matches">
         <View style={styles.matchesHead}>
           <Sparkle size={16} color={colors.brandPrimary} weight="fill" />
-          <AppText variant="heading">Great matches for you</AppText>
+          <AppText variant="heading">{t("discover.greatMatches")}</AppText>
         </View>
         <AppText variant="caption" color={colors.muted}>
-          Readers whose shelves match the genres you love
+          {t("discover.greatMatchesSubtitle")}
         </AppText>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 10, paddingTop: 10 }}>
           {topMatches.map((p) => (
@@ -89,19 +92,21 @@ export default function Discover() {
           ))}
         </ScrollView>
         <AppText variant="heading" style={{ marginTop: 18 }}>
-          All readers nearby
+          {t("discover.allReadersNearby")}
         </AppText>
       </View>
     ) : !hasGenres ? (
       <Pressable testID="matches-setup" onPress={() => router.push("/wishlist")} style={styles.setupCard}>
         <Sparkle size={20} color={colors.brandPrimary} weight="fill" />
         <View style={{ flex: 1 }}>
-          <AppText variant="label">See your best matches</AppText>
+          <AppText variant="label">{t("discover.seeBestMatches")}</AppText>
           <AppText variant="caption" color={colors.muted}>
-            Add the genres you love and we'll surface readers who share them.
+            {t("discover.setupMatches")}
           </AppText>
         </View>
-        <ArrowRight size={16} color={colors.brandPrimary} weight="bold" />
+        <DirectionalIcon>
+          <ArrowRight size={16} color={colors.brandPrimary} weight="bold" />
+        </DirectionalIcon>
       </Pressable>
     ) : null
   ) : null;
@@ -118,7 +123,7 @@ export default function Discover() {
         </View>
 
         <AppText variant="display" style={{ marginTop: 6, marginBottom: 12 }}>
-          Discover readers{"\n"}near you.
+          {t("discover.title")}
         </AppText>
 
         <View style={styles.searchRow}>
@@ -126,7 +131,7 @@ export default function Discover() {
             <MagnifyingGlass size={18} color={colors.muted} />
             <Field
               testID="search-input"
-              placeholder="Search people, books or authors"
+              placeholder={t("discover.searchPlaceholder")}
               value={search}
               onChangeText={setSearch}
               style={styles.searchInput}
@@ -138,30 +143,30 @@ export default function Discover() {
         </View>
 
         <View style={styles.segment}>
-          {(["people", "books"] as const).map((t) => (
+          {(["people", "books"] as const).map((segKey) => (
             <Pressable
-              key={t}
-              testID={`segment-${t}`}
+              key={segKey}
+              testID={`segment-${segKey}`}
               onPress={() => {
                 haptic("selection");
-                setTab(t);
+                setTab(segKey);
               }}
-              style={[styles.segItem, tab === t && styles.segItemActive]}
+              style={[styles.segItem, tab === segKey && styles.segItemActive]}
             >
-              <AppText variant="label" color={tab === t ? colors.onSurfaceInverse : colors.muted}>
-                {t === "people" ? "People" : "Books"}
+              <AppText variant="label" color={tab === segKey ? colors.onSurfaceInverse : colors.muted}>
+                {segKey === "people" ? t("discover.people") : t("discover.books")}
               </AppText>
             </Pressable>
           ))}
         </View>
       </View>
     ),
-    [insets.top, search, tab, notif, colors, styles, openFilters, router],
+    [insets.top, search, tab, notif, colors, styles, openFilters, router, t],
   );
 
   const ChipsBar = (
     <ChipRow style={{ marginBottom: 4 }}>
-      <Chip label="All" selected={genre === "All"} onPress={() => setGenre("All")} testID="genre-chip-All" />
+      <Chip label={t("common.all")} selected={genre === "All"} onPress={() => setGenre("All")} testID="genre-chip-All" />
       {GENRES.map((g) => (
         <Chip key={g} label={g} selected={genre === g} onPress={() => setGenre(g)} testID={`genre-chip-${g}`} />
       ))}
@@ -186,8 +191,8 @@ export default function Discover() {
           ListEmptyComponent={
             <EmptyState
               icon={<BookOpen size={48} color={colors.muted} weight="light" />}
-              title="No readers found"
-              subtitle="Try widening your distance or clearing filters."
+              title={t("discover.noReadersTitle")}
+              subtitle={t("discover.noReadersBody")}
             />
           }
         />
@@ -206,8 +211,8 @@ export default function Discover() {
           ListEmptyComponent={
             <EmptyState
               icon={<BookOpen size={48} color={colors.muted} weight="light" />}
-              title="No books found"
-              subtitle="Try a different search or genre."
+              title={t("discover.noBooksTitle")}
+              subtitle={t("discover.noBooksBody")}
             />
           }
         />
@@ -223,10 +228,10 @@ export default function Discover() {
         handleIndicatorStyle={{ backgroundColor: colors.borderStrong }}
       >
         <BottomSheetView style={{ padding: 20, paddingBottom: insets.bottom + 20, gap: 18 }}>
-          <AppText variant="title">Filters</AppText>
+          <AppText variant="title">{t("common.filters")}</AppText>
 
           <View style={{ gap: 10 }}>
-            <AppText variant="label">Distance</AppText>
+            <AppText variant="label">{t("common.distance")}</AppText>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {DISTANCES.map((d) => (
                 <Chip key={d} label={`${d} km`} selected={maxDistance === d} onPress={() => setMaxDistance(d)} testID={`distance-${d}`} />
@@ -235,9 +240,9 @@ export default function Discover() {
           </View>
 
           <View style={{ gap: 10 }}>
-            <AppText variant="label">Language</AppText>
+            <AppText variant="label">{t("common.language")}</AppText>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              <Chip label="All" selected={language === "All"} onPress={() => setLanguage("All")} />
+              <Chip label={t("common.all")} selected={language === "All"} onPress={() => setLanguage("All")} />
               {LANGUAGES.map((l) => (
                 <Chip key={l} label={l} selected={language === l} onPress={() => setLanguage(l)} testID={`lang-${l}`} />
               ))}
@@ -254,9 +259,9 @@ export default function Discover() {
               style={styles.toggleRow}
             >
               <View>
-                <AppText variant="heading">Currently exchanging only</AppText>
+                <AppText variant="heading">{t("discover.exchangingOnly")}</AppText>
                 <AppText variant="caption" color={colors.muted}>
-                  Show people ready to swap right now
+                  {t("discover.exchangingOnlyHint")}
                 </AppText>
               </View>
               <View style={[styles.switch, exchangingOnly && styles.switchOn]}>
@@ -265,7 +270,7 @@ export default function Discover() {
             </Pressable>
           )}
 
-          <Button title="Show results" onPress={() => sheetRef.current?.close()} testID="apply-filters" />
+          <Button title={t("discover.showResults")} onPress={() => sheetRef.current?.close()} testID="apply-filters" />
         </BottomSheetView>
       </BottomSheet>
     </View>
@@ -276,7 +281,6 @@ const useStyles = makeStyles((colors) => ({
   root: { flex: 1, backgroundColor: colors.surface },
   header: { paddingHorizontal: 20, backgroundColor: colors.surface },
   topRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  wordmark: { fontFamily: FONTS.display, fontSize: 26, lineHeight: 30, color: colors.onSurface },
   bell: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   bellDot: { position: "absolute", top: 10, right: 12, width: 9, height: 9, borderRadius: 5, backgroundColor: colors.brandPrimary },
   searchRow: { flexDirection: "row", gap: 10, alignItems: "center" },

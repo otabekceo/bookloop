@@ -8,10 +8,12 @@ import { X, Barcode } from "phosphor-react-native";
 import { AppText, Button, haptic, useToast } from "@/src/components/ui";
 import { lookupIsbn } from "@/src/googlebooks";
 import { makeStyles, useTheme } from "@/src/theme";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 export default function ScanBook() {
   const styles = useStyles();
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const toast = useToast();
@@ -29,7 +31,7 @@ export default function ScanBook() {
       const prefill = result || { isbn: data.trim(), title: "", author: "", language: "English" };
       router.replace({ pathname: "/book/add", params: { prefill: JSON.stringify(prefill) } });
     } catch {
-      toast("Lookup failed — enter details manually", "error");
+      toast(t("scan.lookupFailed"), "error");
       router.replace({ pathname: "/book/add", params: { prefill: JSON.stringify({ isbn: data.trim() }) } });
     }
   };
@@ -49,15 +51,15 @@ export default function ScanBook() {
         <View style={styles.perm}>
           <Barcode size={56} color={colors.brandSecondary} weight="light" />
           <AppText variant="title" style={{ textAlign: "center" }}>
-            Scan a book barcode
+            {t("scan.title")}
           </AppText>
           <AppText variant="body" color={colors.muted} style={{ textAlign: "center" }}>
-            Point your camera at the ISBN barcode to add a book in seconds.
+            {t("scan.subtitle")}
           </AppText>
           {permission && !permission.canAskAgain ? (
-            <Button title="Open Settings" variant="outline" onPress={() => Linking.openSettings()} testID="scan-open-settings" />
+            <Button title={t("scan.openSettings")} variant="outline" onPress={() => Linking.openSettings()} testID="scan-open-settings" />
           ) : (
-            <Button title="Enable camera" onPress={requestPermission} testID="scan-enable-camera" />
+            <Button title={t("scan.enableCamera")} onPress={requestPermission} testID="scan-enable-camera" />
           )}
         </View>
       )}
@@ -73,7 +75,7 @@ export default function ScanBook() {
         <View pointerEvents="none" style={styles.frameWrap}>
           <View style={styles.frame} />
           <AppText variant="label" color="#FFFFFF" style={{ marginTop: 16, textAlign: "center" }}>
-            Align the barcode inside the frame
+            {t("scan.alignFrame")}
           </AppText>
         </View>
       )}
@@ -82,7 +84,7 @@ export default function ScanBook() {
         <View style={styles.busy}>
           <ActivityIndicator color="#FFFFFF" />
           <AppText variant="label" color="#FFFFFF">
-            Looking up book…
+            {t("scan.lookingUp")}
           </AppText>
         </View>
       )}

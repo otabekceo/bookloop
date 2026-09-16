@@ -8,8 +8,9 @@ import { GoogleLogo } from "phosphor-react-native";
 import { AppText, Button, Field, useToast, haptic } from "@/src/components/ui";
 import { Logo } from "@/src/components/Logo";
 import { useAuth } from "@/src/auth";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { makeStyles, useTheme } from "@/src/theme";
-import { FONTS } from "@/src/typography";
+import { fontsForLanguage } from "@/src/typography";
 
 const AUTH_BG =
   "https://images.unsplash.com/photo-1518373714866-3f1478910cc0?crop=entropy&cs=srgb&fm=jpg&w=1200&q=80";
@@ -19,6 +20,8 @@ export default function Login() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { login, register, loginWithGoogle } = useAuth();
+  const { t, language: uiLanguage } = useLanguage();
+  const uiFonts = fontsForLanguage(uiLanguage);
   const toast = useToast();
 
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -29,7 +32,7 @@ export default function Login() {
 
   const submit = async () => {
     if (!email.trim() || !password.trim() || (mode === "register" && !name.trim())) {
-      toast("Please fill in all fields", "error");
+      toast(t("auth.fillAllFields"), "error");
       return;
     }
     setLoading(true);
@@ -38,7 +41,7 @@ export default function Login() {
       else await register(email.trim(), password, name.trim());
       haptic("success");
     } catch (e: any) {
-      toast(e.message || "Something went wrong", "error");
+      toast(e.message || t("auth.somethingWentWrong"), "error");
     } finally {
       setLoading(false);
     }
@@ -48,7 +51,7 @@ export default function Login() {
     try {
       await loginWithGoogle();
     } catch {
-      toast("Google sign-in failed", "error");
+      toast(t("auth.googleFailed"), "error");
     }
   };
 
@@ -69,8 +72,8 @@ export default function Login() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.brandWrap}>
-          <AppText color="#FFFFFF" style={styles.tagOverImage}>
-            Discover · Exchange · Read
+          <AppText color="#FFFFFF" style={[styles.tagOverImage, { fontFamily: uiFonts.medium }]}>
+            {t("common.tagline")}
           </AppText>
         </View>
 
@@ -79,20 +82,18 @@ export default function Login() {
             <Logo variant="full" height={64} />
           </View>
           <AppText variant="title" style={{ marginBottom: 4 }}>
-            {mode === "login" ? "Welcome back" : "Join the loop"}
+            {mode === "login" ? t("auth.welcomeBack") : t("auth.joinLoop")}
           </AppText>
           <AppText variant="body" color={colors.muted} style={{ marginBottom: 18 }}>
-            {mode === "login"
-              ? "Sign in to discover readers near you."
-              : "Create an account and start swapping books locally."}
+            {mode === "login" ? t("auth.signInSubtitle") : t("auth.registerSubtitle")}
           </AppText>
 
           <View style={{ gap: 12 }}>
             {mode === "register" && (
               <Field
                 testID="name-input"
-                label="Name"
-                placeholder="Your name"
+                label={t("auth.name")}
+                placeholder={t("auth.namePlaceholder")}
                 value={name}
                 onChangeText={setName}
                 onSurface
@@ -100,8 +101,8 @@ export default function Login() {
             )}
             <Field
               testID="email-input"
-              label="Email"
-              placeholder="you@example.com"
+              label={t("auth.email")}
+              placeholder={t("auth.emailPlaceholder")}
               autoCapitalize="none"
               keyboardType="email-address"
               value={email}
@@ -110,7 +111,7 @@ export default function Login() {
             />
             <Field
               testID="password-input"
-              label="Password"
+              label={t("auth.password")}
               placeholder="••••••••"
               secureTextEntry
               value={password}
@@ -121,7 +122,7 @@ export default function Login() {
 
           <Button
             testID="auth-submit-button"
-            title={mode === "login" ? "Sign in" : "Create account"}
+            title={mode === "login" ? t("auth.signIn") : t("auth.createAccount")}
             onPress={submit}
             loading={loading}
             style={{ marginTop: 18 }}
@@ -130,14 +131,14 @@ export default function Login() {
           <View style={styles.divider}>
             <View style={styles.line} />
             <AppText variant="caption" color={colors.muted}>
-              or
+              {t("common.or")}
             </AppText>
             <View style={styles.line} />
           </View>
 
           <Button
             testID="google-button"
-            title="Continue with Google"
+            title={t("auth.continueWithGoogle")}
             variant="outline"
             onPress={google}
             icon={<GoogleLogo size={20} color={colors.brandPrimary} weight="bold" />}
@@ -149,9 +150,9 @@ export default function Login() {
             style={{ marginTop: 18, alignSelf: "center" }}
           >
             <AppText variant="label" color={colors.muted}>
-              {mode === "login" ? "New here? " : "Already have an account? "}
+              {mode === "login" ? t("auth.newHere") : t("auth.alreadyHaveAccount")}
               <AppText variant="label" color={colors.brandPrimary}>
-                {mode === "login" ? "Create an account" : "Sign in"}
+                {mode === "login" ? t("auth.createAccount") : t("auth.signIn")}
               </AppText>
             </AppText>
           </Pressable>
@@ -168,7 +169,7 @@ const useStyles = makeStyles((colors) => ({
   scroll: { flex: 1 },
   content: { paddingHorizontal: 20 },
   brandWrap: { alignItems: "center", marginBottom: 20 },
-  tagOverImage: { fontFamily: FONTS.medium, fontSize: 15, letterSpacing: 1, textShadowColor: "rgba(0,0,0,0.3)", textShadowRadius: 6 },
+  tagOverImage: { fontSize: 15, letterSpacing: 1, textShadowColor: "rgba(0,0,0,0.3)", textShadowRadius: 6 },
   card: {
     backgroundColor: colors.surfaceSecondary,
     borderRadius: 24,

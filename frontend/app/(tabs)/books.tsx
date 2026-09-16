@@ -10,15 +10,23 @@ import { BookOpen, Fire } from "phosphor-react-native";
 import { AppText, Chip, ChipRow, Button, EmptyState } from "@/src/components/ui";
 import { BookTile, Book } from "@/src/components/cards";
 import { apiFetch } from "@/src/api";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { makeStyles, useTheme } from "@/src/theme";
 
-const FILTERS = ["All", "Available", "Reserved", "Swapped"];
+const FILTERS = ["All", "Available", "Reserved", "Swapped"] as const;
+const FILTER_KEYS: Record<(typeof FILTERS)[number], string> = {
+  All: "books.filterAll",
+  Available: "books.filterAvailable",
+  Reserved: "books.filterReserved",
+  Swapped: "books.filterSwapped",
+};
 
 export default function MyBooks() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { t } = useLanguage();
   const { width } = useWindowDimensions();
   const col = (width - 40 - 14) / 2;
   const [filter, setFilter] = useState("All");
@@ -46,15 +54,15 @@ export default function MyBooks() {
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <AppText variant="display">My Books</AppText>
+        <AppText variant="display">{t("books.title")}</AppText>
         <AppText variant="body" color={colors.muted}>
-          Your exchange inventory
+          {t("books.subtitle")}
         </AppText>
       </View>
 
       <ChipRow>
         {FILTERS.map((f) => (
-          <Chip key={f} label={f} selected={filter === f} onPress={() => setFilter(f)} testID={`book-filter-${f}`} />
+          <Chip key={f} label={t(FILTER_KEYS[f])} selected={filter === f} onPress={() => setFilter(f)} testID={`book-filter-${f}`} />
         ))}
       </ChipRow>
 
@@ -74,10 +82,10 @@ export default function MyBooks() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <AppText variant="label">
-                    {wanted} {wanted === 1 ? "reader" : "readers"} nearby want books like yours
+                    {t("books.demandBanner", { count: wanted })}
                   </AppText>
                   <AppText variant="caption" color={colors.muted}>
-                    Based on the genres & languages they're hunting for
+                    {t("books.demandHint")}
                   </AppText>
                 </View>
               </View>
@@ -92,9 +100,9 @@ export default function MyBooks() {
           ListEmptyComponent={
             <EmptyState
               icon={<BookOpen size={48} color={colors.muted} weight="light" />}
-              title="No books yet"
-              subtitle="Add books to your shelf so others can discover and swap with you."
-              action={<Button title="Add your first book" onPress={() => router.push("/book/add")} testID="add-first-book" style={{ marginTop: 8, paddingHorizontal: 28 }} />}
+              title={t("books.emptyTitle")}
+              subtitle={t("books.emptyBody")}
+              action={<Button title={t("books.emptyCta")} onPress={() => router.push("/book/add")} testID="add-first-book" style={{ marginTop: 8, paddingHorizontal: 28 }} />}
             />
           }
         />

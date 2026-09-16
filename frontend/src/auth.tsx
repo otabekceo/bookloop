@@ -25,6 +25,7 @@ export type User = {
   rating: number;
   rating_count: number;
   swaps_count: number;
+  preferred_language?: string | null;
 };
 
 type Status = "loading" | "authed" | "guest";
@@ -38,6 +39,8 @@ type AuthContextType = {
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   setUser: (u: User) => void;
+  /** Persist the chosen UI language to the signed-in user's profile. */
+  setPreferredLanguage: (code: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
@@ -203,9 +206,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStatus("guest");
   }, []);
 
+  const setPreferredLanguage = useCallback(async (code: string) => {
+    // Optimistically reflect locally; the server is the source of truth on next refresh.
+    setUser((prev) => (prev ? { ...prev, preferred_language: code } : prev));
+    try {
+      await apiFetch("/api/users/me", { method: "PUT", body: { preferred_language: code } });
+    } catch {
+      // Non-fatal: local persistence already happened in LanguageProvider.
+    }
+  }, []);
+
   return (
     <AuthContext.Provider
-      value={{ user, status, register, login, loginWithGoogle, logout, refreshUser, setUser }}
+      value={{
+        user,
+        status,
+        register,
+        login,
+        loginWithGoogle,
+        logout,
+        refreshUser,
+        setUser,
+        setPreferredLanguage,
+      }}
     >
       {children}
     </AuthContext.Provider>

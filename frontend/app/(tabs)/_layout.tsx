@@ -6,6 +6,7 @@ import { House, MapTrifold, Books, ArrowsClockwise, User, Plus } from "phosphor-
 
 import { AppText, haptic } from "@/src/components/ui";
 import { apiFetch } from "@/src/api";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { useTheme } from "@/src/theme";
 
 const ICONS: Record<string, any> = {
@@ -16,18 +17,21 @@ const ICONS: Record<string, any> = {
   profile: User,
 };
 
-const LABELS: Record<string, string> = {
-  discover: "Discover",
-  map: "Map",
-  books: "My Books",
-  swaps: "Swaps",
-  profile: "Profile",
+// Translation keys for each tab; resolved at render time so the bar re-renders
+// when the language changes.
+const LABEL_KEYS: Record<string, string> = {
+  discover: "tabs.discover",
+  map: "tabs.map",
+  books: "tabs.books",
+  swaps: "tabs.swaps",
+  profile: "tabs.profile",
 };
 
 function CustomTabBar({ state, navigation }: any) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { t } = useLanguage();
 
   const { data: notif } = useQuery({
     queryKey: ["notifications"],
@@ -35,7 +39,7 @@ function CustomTabBar({ state, navigation }: any) {
     refetchInterval: 15000,
   });
 
-  const routes = state.routes.filter((r: any) => LABELS[r.name]);
+  const routes = state.routes.filter((r: any) => LABEL_KEYS[r.name]);
 
   const renderTab = (route: any) => {
     const index = state.routes.indexOf(route);
@@ -76,7 +80,7 @@ function CustomTabBar({ state, navigation }: any) {
           )}
         </View>
         <AppText variant="caption" color={focused ? colors.brandPrimary : colors.muted} style={{ fontSize: 10 }}>
-          {LABELS[route.name]}
+          {t(LABEL_KEYS[route.name])}
         </AppText>
       </Pressable>
     );

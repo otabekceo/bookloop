@@ -8,16 +8,27 @@ import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from "@gorhom/botto
 import { Image } from "expo-image";
 import { ArrowLeft, PaperPlaneRight, ArrowsClockwise, Star, CheckCircle, X, ImageSquare } from "phosphor-react-native";
 
-import { AppText, Avatar, Button, BookCover, Stars, haptic, useToast } from "@/src/components/ui";
+import { AppText, Avatar, Button, BookCover, Stars, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
 import { apiFetch, resolveImage } from "@/src/api";
 import { pickImage, uploadWithProgress, openSettings } from "@/src/media";
 import { useAuth } from "@/src/auth";
 import { makeStyles, useTheme } from "@/src/theme";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
+
+const STATUS_KEYS: Record<string, string> = {
+  pending: "swaps.statusPending",
+  active: "swaps.statusActive",
+  accepted: "swaps.statusActive",
+  completed: "swaps.statusCompleted",
+  declined: "swaps.statusDeclined",
+  cancelled: "swaps.statusCancelled",
+};
 
 export default function SwapChat() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const styles = useStyles();
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const toast = useToast();
@@ -52,20 +63,20 @@ export default function SwapChat() {
       haptic(hap);
       invalidateAll();
     } catch (e: any) {
-      toast(e.message || "Something went wrong", "error");
+      toast(e.message || t("swapChat.somethingWentWrong"), "error");
     }
   };
 
   const send = async () => {
-    const t = text.trim();
-    if (!t) return;
+    const body = text.trim();
+    if (!body) return;
     setText("");
-    await act(() => apiFetch(`/api/swaps/${id}/messages`, { method: "POST", body: { text: t } }));
+    await act(() => apiFetch(`/api/swaps/${id}/messages`, { method: "POST", body: { text: body } }));
   };
 
   const sendImage = async () => {
     const picked = await pickImage("library", (blocked) => {
-      toast(blocked ? "Enable photo access in Settings" : "Permission needed", "error");
+      toast(blocked ? t("swapChat.enablePhotoAccess") : t("swapChat.permissionNeeded"), "error");
       if (blocked) openSettings();
     });
     if (!picked) return;
@@ -73,7 +84,7 @@ export default function SwapChat() {
       const up = await uploadWithProgress(picked.uri);
       await act(() => apiFetch(`/api/swaps/${id}/messages`, { method: "POST", body: { image_url: up.url } }), "success");
     } catch (e: any) {
-      toast(e.message || "Could not send photo", "error");
+      toast(e.message || t("swapChat.couldNotSendPhoto"), "error");
     }
   };
 
@@ -115,7 +126,7 @@ export default function SwapChat() {
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 10 }}>
             <ArrowsClockwise size={16} color={colors.brandPrimary} weight="bold" />
             <AppText variant="label" color={colors.brandPrimary}>
-              Swap proposal
+              {t("swapChat.proposalTitle")}
             </AppText>
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 14 }}>
@@ -169,14 +180,16 @@ export default function SwapChat() {
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <Pressable testID="back-button" onPress={() => router.back()} style={styles.backBtn}>
-          <ArrowLeft size={22} color={colors.onSurface} />
+          <DirectionalIcon>
+            <ArrowLeft size={22} color={colors.onSurface} />
+          </DirectionalIcon>
         </Pressable>
         <Pressable onPress={() => router.push(`/person/${other.user_id}`)} style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
           <Avatar uri={other.avatar_url} name={other.name} size={38} />
           <View>
             <AppText variant="heading">{other.name}</AppText>
             <AppText variant="caption" color={colors.muted}>
-              {status}
+              {STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status}
             </AppText>
           </View>
         </Pressable>
@@ -199,19 +212,19 @@ export default function SwapChat() {
             <>
               {proposal && !iAmProposer ? (
                 <View style={{ flexDirection: "row", gap: 10 }}>
-                  <Button testID="decline-swap" title="Decline" variant="outline" style={{ flex: 1 }} onPress={() => act(() => apiFetch(`/api/swaps/${id}/decline`, { method: "POST" }))} />
-                  <Button testID="accept-swap" title="Accept" style={{ flex: 1 }} onPress={() => act(() => apiFetch(`/api/swaps/${id}/accept`, { method: "POST" }), "success")} />
+                  <Button testID="decline-swap" title={t("swapChat.decline")} variant="outline" style={{ flex: 1 }} onPress={() => act(() => apiFetch(`/api/swaps/${id}/decline`, { method: "POST" }))} />
+                  <Button testID="accept-swap" title={t("swapChat.accept")} style={{ flex: 1 }} onPress={() => act(() => apiFetch(`/api/swaps/${id}/accept`, { method: "POST" }), "success")} />
                 </View>
               ) : (
                 <View style={{ gap: 8 }}>
                   {iAmProposer && (
                     <AppText variant="caption" color={colors.muted} style={{ textAlign: "center" }}>
-                      Waiting for {other.name?.split(" ")[0]} to respond
+                      {t("swapChat.waitingFor", { name: other.name?.split(" ")[0] })}
                     </AppText>
                   )}
                   <Button
                     testID="propose-swap"
-                    title={proposal ? "Change proposal" : "Propose a swap"}
+                    title={proposal ? t("swapChat.changeProposal") : t("swapChat.proposeSwap")}
                     variant={proposal ? "outline" : "primary"}
                     icon={!proposal ? <ArrowsClockwise size={18} color={colors.onBrandPrimary} weight="bold" /> : undefined}
                     onPress={() => {
@@ -229,18 +242,18 @@ export default function SwapChat() {
             <View style={{ gap: 8 }}>
               {iCompleted ? (
                 <AppText variant="caption" color={colors.muted} style={{ textAlign: "center" }}>
-                  You marked it complete — waiting for {other.name?.split(" ")[0]}
+                  {t("swapChat.youMarkedComplete", { name: other.name?.split(" ")[0] })}
                 </AppText>
               ) : null}
               <Button
                 testID="complete-swap"
-                title="Mark as completed"
+                title={t("swapChat.markCompleted")}
                 icon={<CheckCircle size={18} color={colors.onBrandPrimary} weight="bold" />}
                 disabled={iCompleted}
                 onPress={() =>
                   act(async () => {
                     const r = await apiFetch<{ new_badges?: { label: string }[] }>(`/api/swaps/${id}/complete`, { method: "POST" });
-                    if (r.new_badges?.length) toast(`🏅 Badge unlocked: ${r.new_badges.map((b) => b.label).join(", ")}!`, "success");
+                    if (r.new_badges?.length) toast(t("swapChat.badgeUnlocked", { labels: r.new_badges.map((b) => b.label).join(", ") }), "success");
                   }, "success")
                 }
               />
@@ -252,13 +265,13 @@ export default function SwapChat() {
               <View style={styles.doneRow}>
                 <CheckCircle size={18} color={colors.brandSecondary} weight="fill" />
                 <AppText variant="label" color={colors.brandSecondary}>
-                  Swap completed & rated
+                  {t("swapChat.swapCompletedRated")}
                 </AppText>
               </View>
             ) : (
               <Button
                 testID="rate-swap"
-                title={`Rate ${other.name?.split(" ")[0]}`}
+                title={t("swapChat.rateName", { name: other.name?.split(" ")[0] })}
                 icon={<Star size={18} color={colors.onBrandPrimary} weight="fill" />}
                 onPress={() => rateSheet.current?.expand()}
               />
@@ -267,7 +280,7 @@ export default function SwapChat() {
 
           {(status === "declined" || status === "cancelled") && (
             <AppText variant="label" color={colors.muted} style={{ textAlign: "center" }}>
-              This swap was {status}.
+              {t("swapChat.swapWasStatus", { status: STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status })}
             </AppText>
           )}
 
@@ -280,7 +293,7 @@ export default function SwapChat() {
                 testID="message-input"
                 value={text}
                 onChangeText={setText}
-                placeholder="Message…"
+                placeholder={t("swapChat.messagePlaceholder")}
                 placeholderTextColor={colors.muted}
                 style={styles.input}
                 multiline
@@ -296,10 +309,10 @@ export default function SwapChat() {
       {/* Propose sheet */}
       <BottomSheet ref={proposeSheet} index={-1} snapPoints={[440]} enablePanDownToClose backdropComponent={backdrop} backgroundStyle={{ backgroundColor: colors.surfaceSecondary }} handleIndicatorStyle={{ backgroundColor: colors.borderStrong }}>
         <BottomSheetView style={{ padding: 20, paddingBottom: insets.bottom + 20, gap: 14 }}>
-          <AppText variant="title">Propose a swap</AppText>
-          <AppText variant="label" color={colors.muted}>You give</AppText>
+          <AppText variant="title">{t("swapChat.proposeSwap")}</AppText>
+          <AppText variant="label" color={colors.muted}>{t("swapChat.youGive")}</AppText>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
-            {data.my_books.length === 0 && <AppText variant="body" color={colors.muted}>Add books to your shelf first.</AppText>}
+            {data.my_books.length === 0 && <AppText variant="body" color={colors.muted}>{t("swapChat.addBooksFirst")}</AppText>}
             {data.my_books.map((b: any) => (
               <Pressable key={b.id} testID={`give-${b.id}`} onPress={() => setGiveId(b.id)} style={[styles.pick, giveId === b.id && styles.pickOn]}>
                 <BookCover uri={b.cover_url} width={56} />
@@ -307,9 +320,9 @@ export default function SwapChat() {
               </Pressable>
             ))}
           </ScrollView>
-          <AppText variant="label" color={colors.muted}>You receive</AppText>
+          <AppText variant="label" color={colors.muted}>{t("swapChat.youReceive")}</AppText>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
-            {data.their_books.length === 0 && <AppText variant="body" color={colors.muted}>They have no available books.</AppText>}
+            {data.their_books.length === 0 && <AppText variant="body" color={colors.muted}>{t("swapChat.theyHaveNoBooks")}</AppText>}
             {data.their_books.map((b: any) => (
               <Pressable key={b.id} testID={`get-${b.id}`} onPress={() => setGetId(b.id)} style={[styles.pick, getId === b.id && styles.pickOn]}>
                 <BookCover uri={b.cover_url} width={56} />
@@ -319,7 +332,7 @@ export default function SwapChat() {
           </ScrollView>
           <Button
             testID="send-proposal"
-            title="Send proposal"
+            title={t("swapChat.sendProposal")}
             disabled={!giveId || !getId}
             onPress={() =>
               act(async () => {
@@ -334,7 +347,7 @@ export default function SwapChat() {
       {/* Rate sheet */}
       <BottomSheet ref={rateSheet} index={-1} snapPoints={[380]} enablePanDownToClose backdropComponent={backdrop} backgroundStyle={{ backgroundColor: colors.surfaceSecondary }} handleIndicatorStyle={{ backgroundColor: colors.borderStrong }}>
         <BottomSheetView style={{ padding: 20, paddingBottom: insets.bottom + 20, gap: 16 }}>
-          <AppText variant="title">Rate your swap</AppText>
+          <AppText variant="title">{t("swapChat.rateYourSwap")}</AppText>
           <View style={{ flexDirection: "row", justifyContent: "center", gap: 8 }}>
             {[1, 2, 3, 4, 5].map((n) => (
               <Pressable key={n} testID={`star-${n}`} onPress={() => { haptic("selection"); setStars(n); }}>
@@ -346,19 +359,19 @@ export default function SwapChat() {
             testID="review-input"
             value={review}
             onChangeText={setReview}
-            placeholder="Add a note (optional)"
+            placeholder={t("swapChat.addNoteOptional")}
             placeholderTextColor={colors.muted}
             style={styles.reviewInput}
             multiline
           />
           <Button
             testID="submit-rating"
-            title="Submit rating"
+            title={t("swapChat.submitRating")}
             onPress={() =>
               act(async () => {
                 await apiFetch(`/api/swaps/${id}/rate`, { method: "POST", body: { stars, review } });
                 rateSheet.current?.close();
-                toast("Thanks for rating!", "success");
+                toast(t("swapChat.thanksForRating"), "success");
               }, "success")
             }
           />
