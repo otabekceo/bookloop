@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import { House, MapTrifold, Books, ArrowsClockwise, User, Plus } from "phosphor-react-native";
 
-import { AppText, haptic } from "@/src/components/ui";
+import { AppText, haptic, useDirectionalStyle } from "@/src/components/ui";
 import { apiFetch } from "@/src/api";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { useTheme } from "@/src/theme";
@@ -32,6 +32,20 @@ function CustomTabBar({ state, navigation }: any) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { t } = useLanguage();
+  // The badge is absolutely positioned; mirror its anchor under RTL so it sits
+  // on the leading corner of the icon in Arabic.
+  const badgeStyle = useDirectionalStyle({
+    position: "absolute",
+    top: -4,
+    right: -8,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.brandPrimary,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  });
 
   const { data: notif } = useQuery({
     queryKey: ["notifications"],
@@ -59,20 +73,7 @@ function CustomTabBar({ state, navigation }: any) {
         <View>
           <Icon size={24} color={focused ? colors.brandPrimary : colors.muted} weight={focused ? "fill" : "regular"} />
           {badge > 0 && (
-            <View
-              style={{
-                position: "absolute",
-                top: -4,
-                right: -8,
-                minWidth: 16,
-                height: 16,
-                borderRadius: 8,
-                backgroundColor: colors.brandPrimary,
-                alignItems: "center",
-                justifyContent: "center",
-                paddingHorizontal: 4,
-              }}
-            >
+            <View style={badgeStyle}>
               <AppText variant="caption" color={colors.onBrandPrimary} style={{ fontSize: 10 }}>
                 {badge}
               </AppText>

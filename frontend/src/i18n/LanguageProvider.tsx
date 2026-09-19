@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { I18nManager } from "react-native";
+import { I18nManager, Platform } from "react-native";
 import { useTranslation } from "react-i18next";
 
 import i18n, {
@@ -118,6 +118,17 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     },
     [],
   );
+
+  // Web only: `I18nManager.forceRTL` is a no-op in the browser, so mirror the
+  // document itself. Setting `dir`/`lang` on <html> lets the browser's bidi
+  // algorithm lay out mixed Arabic + Latin text correctly and flips native
+  // scrollbars/overflow. Native platforms rely on I18nManager instead.
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof document === "undefined") return;
+    const el = document.documentElement;
+    el.dir = isRTLLanguage(language) ? "rtl" : "ltr";
+    el.lang = language;
+  }, [language]);
 
   const value = useMemo<LanguageContextType>(
     () => ({

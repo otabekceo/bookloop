@@ -8,7 +8,7 @@ import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from "@gorhom/botto
 import { Image } from "expo-image";
 import { ArrowLeft, PaperPlaneRight, ArrowsClockwise, Star, CheckCircle, X, ImageSquare } from "phosphor-react-native";
 
-import { AppText, Avatar, Button, BookCover, Stars, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
+import { AppText, Avatar, Button, BookCover, Stars, DirectionalIcon, haptic, useToast, useDirectionalStyle } from "@/src/components/ui";
 import { apiFetch, resolveImage } from "@/src/api";
 import { pickImage, uploadWithProgress, openSettings } from "@/src/media";
 import { useAuth } from "@/src/auth";
@@ -44,6 +44,13 @@ export default function SwapChat() {
   const [getId, setGetId] = useState<string | null>(null);
   const [stars, setStars] = useState(5);
   const [review, setReview] = useState("");
+
+  // Chat bubble "tails" are physical corners; mirror them under RTL so the tail
+  // keeps pointing away from the sender's side after the row flips.
+  const bubbleMineStyle = useDirectionalStyle(styles.bubbleMine);
+  const bubbleTheirsStyle = useDirectionalStyle(styles.bubbleTheirs);
+  const imageTailMine = useDirectionalStyle({ borderBottomRightRadius: 4 });
+  const imageTailTheirs = useDirectionalStyle({ borderBottomLeftRadius: 4 });
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["swap", id],
@@ -151,7 +158,7 @@ export default function SwapChat() {
     if (item.type === "image") {
       return (
         <View style={[styles.bubbleRow, { justifyContent: mine ? "flex-end" : "flex-start" }]}>
-          <View style={[styles.imageBubble, mine ? { borderBottomRightRadius: 4 } : { borderBottomLeftRadius: 4 }]}>
+          <View style={[styles.imageBubble, mine ? imageTailMine : imageTailTheirs]}>
             <Image source={{ uri: resolveImage(item.image_url) }} style={styles.chatImage} contentFit="cover" transition={200} />
             {item.text ? (
               <AppText variant="body" color={colors.onSurface} style={{ marginTop: 6 }}>
@@ -164,7 +171,7 @@ export default function SwapChat() {
     }
     return (
       <View style={[styles.bubbleRow, { justifyContent: mine ? "flex-end" : "flex-start" }]}>
-        <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
+        <View style={[styles.bubble, mine ? bubbleMineStyle : bubbleTheirsStyle]}>
           <AppText variant="body" color={mine ? colors.onBrandPrimary : colors.onSurfaceSecondary}>
             {item.text}
           </AppText>

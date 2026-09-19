@@ -1,6 +1,7 @@
 import { WebView } from "react-native-webview";
 
 import { buildLeafletHTML } from "@/src/components/leaflet";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 export default function DensityMap({
   clusters,
@@ -9,7 +10,8 @@ export default function DensityMap({
   clusters: any[];
   onSelect: (neighborhood: string) => void;
 }) {
-  const html = buildLeafletHTML(clusters);
+  const { isRTL } = useLanguage();
+  const html = buildLeafletHTML(clusters, isRTL);
   return (
     <WebView
       originWhitelist={["*"]}

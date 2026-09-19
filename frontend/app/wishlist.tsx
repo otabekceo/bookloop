@@ -5,13 +5,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Sparkle, MapPin, CaretDown, CaretUp } from "phosphor-react-native";
 
-import { AppText, Button, Chip, Avatar, RatingPill, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
+import { AppText, Button, Chip, Avatar, RatingPill, DirectionalIcon, haptic, useToast, useDirectionalStyle } from "@/src/components/ui";
 import { BookTile, Book, Person } from "@/src/components/cards";
 import { useAuth } from "@/src/auth";
 import { apiFetch } from "@/src/api";
 import { GENRES, LANGUAGES, READING_INTERESTS } from "@/src/constants";
 import { makeStyles, useTheme } from "@/src/theme";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
+import { bidiIsolate } from "@/src/i18n";
 
 type WishBook = Book & { owner_avatar?: string | null; owner_exchanging?: boolean; distance_km: number; match_score: number };
 type WishData = {
@@ -28,10 +29,12 @@ export default function Wishlist() {
   const router = useRouter();
   const toast = useToast();
   const qc = useQueryClient();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { user, refreshUser } = useAuth();
   const { width } = useWindowDimensions();
   const tile = (width - 40 - 24) / 2.4;
+  // Trailing padding on the horizontal book rail must follow the reading edge.
+  const railStyle = useDirectionalStyle({ gap: 14, paddingRight: 20 });
 
   const [genres, setGenres] = useState<string[]>(user?.genres || []);
   const [languages, setLanguages] = useState<string[]>(user?.languages || []);
@@ -153,14 +156,14 @@ export default function Wishlist() {
             <View style={{ gap: 10 }}>
               <AppText variant="heading">{t("wishlist.booksForYou", { count: books.length })}</AppText>
               {books.length > 0 ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 14, paddingRight: 20 }}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={railStyle}>
                   {books.map((b) => (
                     <View key={b.id} style={{ width: tile, gap: 4 }}>
                       <BookTile book={b} width={tile} showOwner onPress={() => router.push(`/book/${b.id}`)} />
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
                         <MapPin size={11} color={colors.brandSecondary} weight="fill" />
                         <AppText variant="caption" color={colors.muted} style={{ fontSize: 11 }}>
-                          {b.distance_km < 999 ? `${b.distance_km} km` : t("common.nearby")} · {b.genre}
+                          {b.distance_km < 999 ? bidiIsolate(`${b.distance_km} km`, language) : t("common.nearby")} · {bidiIsolate(b.genre, language)}
                         </AppText>
                       </View>
                     </View>
@@ -194,10 +197,10 @@ export default function Wishlist() {
                         <RatingPill rating={p.rating} count={p.rating_count} />
                       </View>
                       <AppText variant="caption" color={colors.brandPrimary} numberOfLines={1}>
-                        {[...(p.shared_genres || []), ...(p.shared_interests || [])].slice(0, 3).join(" · ") || t("wishlist.sharesYourLanguages")}
+                        {[...(p.shared_genres || []), ...(p.shared_interests || [])].slice(0, 3).map((g) => bidiIsolate(g, language)).join(" · ") || t("wishlist.sharesYourLanguages")}
                       </AppText>
                       <AppText variant="caption" color={colors.muted}>
-                        {p.distance_km < 999 ? `${p.distance_km} km` : p.neighborhood} · {t("wishlist.booksForYouShort", { count: p.available_count || 0 })}
+                        {p.distance_km < 999 ? bidiIsolate(`${p.distance_km} km`, language) : bidiIsolate(p.neighborhood, language)} · {t("wishlist.booksForYouShort", { count: p.available_count || 0 })}
                         {p.is_exchanging ? ` ${t("wishlist.exchangingNow")}` : ""}
                       </AppText>
                     </View>

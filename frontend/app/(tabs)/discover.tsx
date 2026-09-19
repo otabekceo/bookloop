@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from "@gorhom/bottom-sheet";
 import { MagnifyingGlass, SlidersHorizontal, Bell, BookOpen, Sparkle, ArrowRight } from "phosphor-react-native";
 
-import { AppText, Chip, ChipRow, Field, Button, EmptyState, DirectionalIcon, haptic } from "@/src/components/ui";
+import { AppText, Chip, ChipRow, Field, Button, EmptyState, DirectionalIcon, haptic, useDirectionalStyle } from "@/src/components/ui";
 import { Logo } from "@/src/components/Logo";
 import { PersonCard, MatchCard, BookTile, Person, Book } from "@/src/components/cards";
 import { apiFetch } from "@/src/api";
@@ -26,6 +26,10 @@ export default function Discover() {
   const uiFonts = fontsForLanguage(uiLanguage);
   const { width } = useWindowDimensions();
   const col = (width - 40 - 14) / 2;
+  // The unread dot is absolutely positioned; mirror its anchor under RTL.
+  const bellDotStyle = useDirectionalStyle(styles.bellDot);
+  // Leading inset for the search icon must follow the reading edge.
+  const searchPillStyle = useDirectionalStyle(styles.searchPill);
 
   const [tab, setTab] = useState<"people" | "books">("people");
   const [search, setSearch] = useState("");
@@ -118,7 +122,7 @@ export default function Discover() {
           <Logo variant="wordmark" height={24} />
           <Pressable testID="notif-bell" onPress={() => router.push("/(tabs)/swaps")} style={styles.bell}>
             <Bell size={22} color={colors.onSurface} weight="regular" />
-            {(notif?.total || 0) > 0 && <View style={styles.bellDot} />}
+            {(notif?.total || 0) > 0 && <View style={bellDotStyle} />}
           </Pressable>
         </View>
 
@@ -127,7 +131,7 @@ export default function Discover() {
         </AppText>
 
         <View style={styles.searchRow}>
-          <View style={styles.searchPill}>
+          <View style={searchPillStyle}>
             <MagnifyingGlass size={18} color={colors.muted} />
             <Field
               testID="search-input"
@@ -161,7 +165,7 @@ export default function Discover() {
         </View>
       </View>
     ),
-    [insets.top, search, tab, notif, colors, styles, openFilters, router, t],
+    [insets.top, search, tab, notif, colors, styles, openFilters, router, t, bellDotStyle, searchPillStyle],
   );
 
   const ChipsBar = (

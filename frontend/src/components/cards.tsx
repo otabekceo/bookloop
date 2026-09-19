@@ -2,8 +2,10 @@ import { View, Pressable, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { MapPin, Sparkle, Fire } from "phosphor-react-native";
 
-import { AppText, Avatar, BookCover, ExchangingDot, RatingPill, StatusBadge, haptic } from "@/src/components/ui";
+import { AppText, Avatar, BookCover, ExchangingDot, RatingPill, StatusBadge, haptic, useDirectionalStyle } from "@/src/components/ui";
 import { Badge, BadgeIcon, topBadge } from "@/src/components/badges";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
+import { bidiIsolate } from "@/src/i18n";
 import { useTheme } from "@/src/theme";
 
 export type Person = {
@@ -42,7 +44,10 @@ export type Book = {
 
 export function PersonCard({ person }: { person: Person }) {
   const { colors } = useTheme();
+  const { t, language } = useLanguage();
   const router = useRouter();
+  // Shared-genres pill carries a trailing gap; mirror it under RTL.
+  const sharedPillStyle = useDirectionalStyle({ flexDirection: "row", alignItems: "center", gap: 4, marginRight: 2 });
   const shared = new Set(person.shared_genres || []);
   const best = topBadge(person.badges);
   // Show shared genres first so the match is glanceable.
@@ -82,12 +87,14 @@ export function PersonCard({ person }: { person: Person }) {
             <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
               <MapPin size={13} color={colors.brandSecondary} weight="fill" />
               <AppText variant="caption" color={colors.muted}>
-                {person.distance_km < 999 ? `${person.distance_km} km` : person.neighborhood}
+                {person.distance_km < 999
+                  ? t("common.kmAway", { distance: person.distance_km })
+                  : person.neighborhood}
               </AppText>
             </View>
             <RatingPill rating={person.rating} count={person.rating_count} />
             <AppText variant="caption" color={colors.muted}>
-              {person.swaps_count} swaps
+              {t("common.swapCount", { count: person.swaps_count })}
             </AppText>
           </View>
         </View>
@@ -96,10 +103,10 @@ export function PersonCard({ person }: { person: Person }) {
       {genres.length > 0 && (
         <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
           {shared.size > 0 && (
-            <View testID="shared-genres-pill" style={{ flexDirection: "row", alignItems: "center", gap: 4, marginRight: 2 }}>
+            <View testID="shared-genres-pill" style={sharedPillStyle}>
               <Sparkle size={13} color={colors.brandPrimary} weight="fill" />
               <AppText variant="caption" color={colors.brandPrimary}>
-                {shared.size} in common
+                {t("cards.inCommon", { count: shared.size })}
               </AppText>
             </View>
           )}
@@ -108,7 +115,7 @@ export function PersonCard({ person }: { person: Person }) {
             return (
               <View key={g} style={{ backgroundColor: hit ? colors.brandTertiary : colors.surfaceTertiary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
                 <AppText variant="caption" color={hit ? colors.onBrandTertiary : colors.onSurfaceTertiary}>
-                  {g}
+                  {bidiIsolate(g, language)}
                 </AppText>
               </View>
             );
@@ -137,6 +144,7 @@ export function PersonCard({ person }: { person: Person }) {
 /** Compact card for the "Great matches" strip on Discover. */
 export function MatchCard({ person }: { person: Person }) {
   const { colors } = useTheme();
+  const { t, language } = useLanguage();
   const router = useRouter();
   const shared = person.shared_genres || [];
   return (
@@ -164,20 +172,22 @@ export function MatchCard({ person }: { person: Person }) {
       <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
         <Sparkle size={12} color={colors.brandPrimary} weight="fill" />
         <AppText variant="caption" color={colors.brandPrimary}>
-          {shared.length} {shared.length === 1 ? "genre" : "genres"} in common
+          {t("cards.genresInCommon", { count: shared.length })}
         </AppText>
       </View>
       <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 4 }}>
         {shared.slice(0, 2).map((g) => (
           <View key={g} style={{ backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
             <AppText variant="caption" color={colors.onBrandTertiary} style={{ fontSize: 11 }}>
-              {g}
+              {bidiIsolate(g, language)}
             </AppText>
           </View>
         ))}
       </View>
       <AppText variant="caption" color={colors.muted}>
-        {person.distance_km < 999 ? `${person.distance_km} km away` : person.neighborhood}
+        {person.distance_km < 999
+          ? t("common.kmAway", { distance: person.distance_km })
+          : person.neighborhood}
       </AppText>
     </Pressable>
   );
@@ -199,6 +209,7 @@ export function BookTile({
   wantedBy?: number;
 }) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   return (
     <Pressable
       testID={`book-tile-${book.id}`}
@@ -224,7 +235,7 @@ export function BookTile({
             <View testID={`wanted-pill-${book.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
               <Fire size={11} color={colors.onBrandTertiary} weight="fill" />
               <AppText variant="caption" color={colors.onBrandTertiary} style={{ fontSize: 11 }}>
-                {wantedBy} want{wantedBy === 1 ? "s" : ""} this
+                {t("cards.wantsThis", { count: wantedBy })}
               </AppText>
             </View>
           )}

@@ -49,6 +49,38 @@ export function DirectionalIcon({ children, mirror = true }: { children: React.R
   return <View style={{ transform: [{ scaleX: -1 }] }}>{children}</View>;
 }
 
+/**
+ * Returns a style object that swaps physical `left`/`right` (and their margin
+ * and padding variants) for the correct side under the active direction.
+ *
+ * React Native's `I18nManager` only mirrors `start`/`end` logical properties,
+ * not the physical `left`/`right` used by absolutely-positioned overlays such
+ * as notification badges and camera buttons. Pass the LTR style and this hook
+ * mirrors the horizontal anchors when the language is RTL.
+ *
+ * Example: `useDirectionalStyle({ right: -8 })` → `{ left: -8 }` under Arabic.
+ */
+export function useDirectionalStyle<T extends ViewStyle>(ltr: T): T {
+  const isRTL = useRTL();
+  return React.useMemo(() => {
+    if (!isRTL) return ltr;
+    const flipped = { ...(ltr as Record<string, unknown>) };
+    const swap = (a: string, b: string) => {
+      if (a in flipped) {
+        flipped[b] = flipped[a];
+        delete flipped[a];
+      }
+    };
+    swap("left", "right");
+    swap("marginLeft", "marginRight");
+    swap("paddingLeft", "paddingRight");
+    swap("borderTopLeftRadius", "borderTopRightRadius");
+    swap("borderBottomLeftRadius", "borderBottomRightRadius");
+    swap("borderLeftWidth", "borderRightWidth");
+    return flipped as unknown as T;
+  }, [isRTL, ltr]);
+}
+
 // ---------------------------------------------------------------------------
 // AppText
 // ---------------------------------------------------------------------------

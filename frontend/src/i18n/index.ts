@@ -7,6 +7,7 @@ import {
   DEFAULT_LANGUAGE,
   LANGUAGE_CODES,
   isLanguageCode,
+  isRTLLanguage,
   matchDeviceLocale,
   type LanguageCode,
 } from "./languages";
@@ -118,6 +119,26 @@ export function formatNumber(value: number, language: string | null | undefined)
   } catch {
     return String(value);
   }
+}
+
+// Unicode bidi isolates: FSI (First Strong Isolate) … PDI (Pop Directional
+// Isolate). Wrapping an embedded run keeps it visually intact inside a
+// paragraph of the opposite direction.
+const FSI = "\u2068";
+const PDI = "\u2069";
+
+/**
+ * Wraps a value in Unicode bidi isolation marks when the active language is
+ * RTL. Use for embedded data that is not translated — Latin genre names, book
+ * titles, author names, distances — so the bidi algorithm does not reorder
+ * surrounding punctuation (e.g. the `·` separator) around it.
+ *
+ * No-op for LTR languages, so it is safe to call unconditionally.
+ */
+export function bidiIsolate(value: string | number, language: string | null | undefined): string {
+  const text = String(value);
+  if (!isRTLLanguage(language)) return text;
+  return `${FSI}${text}${PDI}`;
 }
 
 export default i18n;

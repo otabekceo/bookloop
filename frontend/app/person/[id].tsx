@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, MapPin, ArrowsClockwise, ArrowRight, Sparkle } from "phosphor-react-native";
 
-import { AppText, Avatar, Button, Stars, RatingPill, ExchangingDot, EmptyState, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
+import { AppText, Avatar, Button, Stars, RatingPill, ExchangingDot, EmptyState, DirectionalIcon, haptic, useToast, useDirectionalStyle } from "@/src/components/ui";
 import { BookTile, Book } from "@/src/components/cards";
 import { BadgeChips } from "@/src/components/badges";
 import { apiFetch } from "@/src/api";
@@ -22,6 +22,9 @@ export default function PersonProfile() {
   const toast = useToast();
   const { width } = useWindowDimensions();
   const col = (width - 40 - 14) / 2;
+  // Pushes the star rating to the trailing edge; `marginLeft: auto` does not
+  // auto-mirror, so swap it under RTL.
+  const pushEndStyle = useDirectionalStyle({ marginLeft: "auto" as const });
   const [requesting, setRequesting] = useState(false);
 
   const { data, isLoading } = useQuery({
@@ -156,7 +159,7 @@ export default function PersonProfile() {
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
                       <Avatar uri={r.rater_avatar} name={r.rater_name} size={32} />
                       <AppText variant="label">{r.rater_name}</AppText>
-                      <View style={{ marginLeft: "auto" }}>
+                      <View style={pushEndStyle}>
                         <Stars value={r.stars} />
                       </View>
                     </View>

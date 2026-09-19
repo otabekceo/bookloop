@@ -6,11 +6,18 @@ type Cluster = {
   books_count: number;
 };
 
-// Builds a self-contained Leaflet map HTML with sage count markers.
-export function buildLeafletHTML(clusters: Cluster[]): string {
+/**
+ * Builds a self-contained Leaflet map HTML with sage count markers.
+ *
+ * `rtl` mirrors the map chrome (zoom controls, attribution) and the marker
+ * labels for right-to-left languages such as Arabic, so the embedded WebView
+ * matches the rest of the app's layout direction.
+ */
+export function buildLeafletHTML(clusters: Cluster[], rtl = false): string {
   const data = JSON.stringify(clusters);
+  const dir = rtl ? "rtl" : "ltr";
   return `<!DOCTYPE html>
-<html>
+<html lang="${rtl ? "ar" : "en"}" dir="${dir}">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=4.0, user-scalable=yes" />
@@ -30,6 +37,11 @@ export function buildLeafletHTML(clusters: Cluster[]): string {
   }
   .marker-wrap{display:flex;flex-direction:column;align-items:center;}
   .leaflet-control-attribution{font-size:9px;}
+  /* Mirror Leaflet's directional chrome under RTL. */
+  html[dir="rtl"] .leaflet-left{left:auto;right:0;}
+  html[dir="rtl"] .leaflet-right{right:auto;left:0;}
+  html[dir="rtl"] .leaflet-control-zoom{float:right;}
+  html[dir="rtl"] .leaflet-control-attribution{float:left;}
 </style>
 </head>
 <body>

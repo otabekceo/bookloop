@@ -6,7 +6,7 @@ import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useQueryClient } from "@tanstack/react-query";
 import { X, Camera, Image as ImageIcon } from "phosphor-react-native";
 
-import { AppText, Avatar, Button, Field, Chip, haptic, useToast } from "@/src/components/ui";
+import { AppText, Avatar, Button, Field, Chip, haptic, useToast, useDirectionalStyle } from "@/src/components/ui";
 import { useAuth } from "@/src/auth";
 import { apiFetch } from "@/src/api";
 import { pickImage, uploadWithProgress, openSettings } from "@/src/media";
@@ -32,6 +32,8 @@ export default function EditProfile() {
   const qc = useQueryClient();
   const { t } = useLanguage();
   const { user, refreshUser } = useAuth();
+  // Camera badge sits on the avatar's trailing corner; mirror it under RTL.
+  const camBadgeStyle = useDirectionalStyle(styles.camBadge);
 
   const [name, setName] = useState(user?.name || "");
   const [bio, setBio] = useState(user?.bio || "");
@@ -99,7 +101,7 @@ export default function EditProfile() {
         <View style={{ alignItems: "center", gap: 10 }}>
           <Pressable testID="pick-avatar" onPress={() => pickAvatar("library")} style={styles.avatarWrap}>
             {uploading ? <ActivityIndicator color={colors.brandPrimary} /> : <Avatar uri={avatar} name={name} size={96} />}
-            <View style={styles.camBadge}>
+            <View style={camBadgeStyle}>
               <Camera size={16} color={colors.onBrandPrimary} weight="fill" />
             </View>
           </Pressable>
