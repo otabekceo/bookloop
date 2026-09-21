@@ -255,6 +255,17 @@
     "lookupFailed": "Ricerca non riuscita — inserisci i dettagli manualmente"
   },
   "swapChat": {
+    "sys": {
+      "interested": "{{name}} è interessato/a a scambiare libri.",
+      "proposed": "Scambio proposto: “{{offered}}” ⇄ “{{requested}}”",
+      "confirmed": "Scambio confermato! Accordatevi per incontrarvi di persona.",
+      "declined": "{{name}} ha rifiutato lo scambio.",
+      "cancelled": "{{name}} ha annullato lo scambio.",
+      "markedComplete": "{{name}} ha segnato lo scambio come completato.",
+      "completed": "Scambio completato! Lascia una valutazione.",
+      "badgeUnlocked": "🏅 {{name}} ha sbloccato il badge {{badge}}!",
+      "photo": "📷 Foto"
+    },
     "proposalTitle": "Proposta di scambio",
     "decline": "Rifiuta",
     "accept": "Accetta",
@@ -328,6 +339,12 @@
     "couldNotSave": "Impossibile salvare"
   },
   "badges": {
+    "names": {
+      "first_loop": "Primo Loop",
+      "regular": "Habitué del Loop",
+      "bookworm": "Topo di biblioteca",
+      "legend": "Leggenda del Loop"
+    },
     "progress": "Ancora {{count}} scambio per sbloccare {{label}}",
     "progress_plural": "Ancora {{count}} scambi per sbloccare {{label}}",
     "allUnlocked": "Hai sbloccato tutti i badge — status leggenda!"

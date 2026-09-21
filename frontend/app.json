@@ -1,15 +1,15 @@
 {
   "expo": {
     "name": "BookLoop",
-    "slug": "frontend",
+    "slug": "bookloop",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "scheme": "bookloop",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.booklooppreview.kh5mx8",
+      "bundleIdentifier": "com.otabekceo.bookloop",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Add book covers and profile photos",
         "NSCameraUsageDescription": "Scan book barcodes and take cover photos"
@@ -20,7 +20,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#F7F4EE"
       },
-      "package": "com.emergent.booklooppreview.kh5mx8",
+      "package": "com.otabekceo.bookloop",
       "permissions": ["READ_MEDIA_IMAGES", "CAMERA"]
     },
     "web": {

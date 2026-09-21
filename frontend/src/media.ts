@@ -1,9 +1,7 @@
 import { Platform, Linking } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 
-import { getToken } from "@/src/api";
-
-const BASE = process.env.EXPO_PUBLIC_BACKEND_URL as string;
+import { API_BASE as BASE, getToken } from "@/src/api";
 
 export type PickResult = { uri: string } | null;
 

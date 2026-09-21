@@ -1,17 +1,25 @@
 import os
+import re
+import json
+import time
+import hmac
 import uuid
 import math
+import base64
+import hashlib
+import secrets
 import logging
 from pathlib import Path
+from urllib.parse import urlencode, urlparse
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 import bcrypt
 import httpx
-import requests
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header, UploadFile, File, Query
-from fastapi.responses import Response
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header, Request, UploadFile, File, Query
+from fastapi.responses import Response, JSONResponse, RedirectResponse
 from fastapi.concurrency import run_in_threadpool
+from pymongo.errors import DuplicateKeyError
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -27,18 +35,93 @@ mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
-EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
-EMERGENT_AUTH_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+# Google sign-in uses our own Google Cloud OAuth "Web application" client (see backend/.env.example).
+# The GOOGLE_*_URL overrides exist so tests can point the backend at a fake Google.
+GOOGLE_CLIENT_ID = (os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
+GOOGLE_CLIENT_SECRET = (os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip()
+GOOGLE_AUTH_URL = os.environ.get("GOOGLE_AUTH_URL") or "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = os.environ.get("GOOGLE_TOKEN_URL") or "https://oauth2.googleapis.com/token"
+GOOGLE_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
+# Public https address of this API, used to build the redirect URI registered in Google Cloud.
+# Falls back to the address the request arrived on (fine locally, wrong behind a proxy).
+PUBLIC_BACKEND_URL = (os.environ.get("PUBLIC_BACKEND_URL") or "").strip().rstrip("/")
+# Where the app may be sent back to after Google: custom URL schemes of the app (Expo Go uses exp://),
+# plus web origins. http://localhost and http://127.0.0.1 are always allowed for development.
+APP_URL_SCHEMES = tuple(
+    s.strip().lower() for s in (os.environ.get("APP_URL_SCHEMES") or "exp,exps,bookloop").split(",") if s.strip()
+)
+APP_REDIRECT_ORIGINS = tuple(
+    o.strip().rstrip("/") for o in (os.environ.get("APP_REDIRECT_ORIGINS") or "").split(",") if o.strip()
+)
 
-STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
-STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
+# Uploaded images live on local disk under STORAGE_DIR (default: backend/uploads). In production
+# point STORAGE_DIR at a persistent volume, and back it up together with the database.
+STORAGE_DIR = Path(os.environ.get("STORAGE_DIR") or (ROOT_DIR / "uploads")).resolve()
 APP_NAME = "bookloop"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("bookloop")
 
+FILE_PREFIX = "/api/files/"
+FILE_URL_TTL_HOURS = 24
+_file_secret: bytes = b""
+
+
+async def load_file_secret() -> None:
+    """Key for signing file URLs: FILE_SIGNING_SECRET if set, else one generated once and kept in Mongo."""
+    global _file_secret
+    env = os.environ.get("FILE_SIGNING_SECRET")
+    if env:
+        _file_secret = env.encode()
+        return
+    doc = await db.app_settings.find_one({"_id": "file_signing_secret"})
+    if not doc:
+        try:
+            await db.app_settings.insert_one({"_id": "file_signing_secret", "value": secrets.token_hex(32)})
+        except DuplicateKeyError:
+            pass
+        doc = await db.app_settings.find_one({"_id": "file_signing_secret"})
+    _file_secret = doc["value"].encode()
+
+
+def _file_sig(path: str, exp: int) -> str:
+    return hmac.new(_file_secret, f"{path}:{exp}".encode(), hashlib.sha256).hexdigest()
+
+
+def sign_file_url(url: str) -> str:
+    """Append a time-limited signature to an internal file URL. Any existing query is replaced.
+    `exp` is bucketed by the hour so a URL stays identical (cache-friendly) within the hour."""
+    base = url.split("?", 1)[0]
+    exp = (int(time.time()) // 3600 + FILE_URL_TTL_HOURS + 1) * 3600
+    return f"{base}?exp={exp}&sig={_file_sig(base[len(FILE_PREFIX):], exp)}"
+
+
+def _valid_file_sig(path: str, exp: Optional[int], sig: Optional[str]) -> bool:
+    if exp is None or not sig or exp < int(time.time()):
+        return False
+    return hmac.compare_digest(sig, _file_sig(path, exp))
+
+
+def _sign_tree(o):
+    if isinstance(o, str):
+        return sign_file_url(o) if o.startswith(FILE_PREFIX) else o
+    if isinstance(o, list):
+        return [_sign_tree(x) for x in o]
+    if isinstance(o, dict):
+        return {k: _sign_tree(v) for k, v in o.items()}
+    return o
+
+
+class SignedJSONResponse(JSONResponse):
+    """Every /api JSON response gets its internal file URLs signed on the way out, so images
+    only load for people who were given the URL by an authenticated request."""
+
+    def render(self, content) -> bytes:
+        return super().render(_sign_tree(content))
+
+
 app = FastAPI()
-api = APIRouter(prefix="/api")
+api = APIRouter(prefix="/api", default_response_class=SignedJSONResponse)
 
 
 def now_utc() -> datetime:
@@ -50,48 +133,36 @@ def new_id(prefix: str) -> str:
 
 
 # ----------------------------------------------------------------------------
-# Object storage helpers (sync -> run_in_threadpool)
+# File storage (local disk). Sync helpers, called through run_in_threadpool.
+# The logical object path ("bookloop/uploads/<user>/<id>.<ext>") is what the database and the
+# /api/files URLs use, so swapping this for S3 later only means rewriting these three functions.
 # ----------------------------------------------------------------------------
-_storage_key = None
+def _storage_file(path: str) -> Path:
+    """Map a logical object path to a file inside STORAGE_DIR; refuse anything that escapes it."""
+    target = (STORAGE_DIR / path).resolve()
+    if STORAGE_DIR != target and STORAGE_DIR not in target.parents:
+        raise FileNotFoundError(path)
+    return target
 
 
-def init_storage():
-    global _storage_key
-    if _storage_key:
-        return _storage_key
-    resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_KEY}, timeout=30)
-    resp.raise_for_status()
-    _storage_key = resp.json()["storage_key"]
-    return _storage_key
+def init_storage() -> None:
+    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def put_object(path: str, data: bytes, content_type: str) -> dict:
-    global _storage_key
-    key = init_storage()
-    resp = requests.put(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key, "Content-Type": content_type},
-        data=data,
-        timeout=120,
-    )
-    if resp.status_code == 503:
-        _storage_key = None
-        key = init_storage()
-        resp = requests.put(
-            f"{STORAGE_URL}/objects/{path}",
-            headers={"X-Storage-Key": key, "Content-Type": content_type},
-            data=data,
-            timeout=120,
-        )
-    resp.raise_for_status()
-    return resp.json()
+def put_object(path: str, data: bytes) -> None:
+    target = _storage_file(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # Write to a temp file and rename so a reader never sees a half-written image.
+    tmp = target.with_name(target.name + f".{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
-def get_object(path: str):
-    key = init_storage()
-    resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
-    resp.raise_for_status()
-    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+def get_object(path: str) -> bytes:
+    return _storage_file(path).read_bytes()
 
 
 # ----------------------------------------------------------------------------
@@ -111,10 +182,14 @@ def haversine_km(lat1, lng1, lat2, lng2) -> float:
 # ----------------------------------------------------------------------------
 # Models
 # ----------------------------------------------------------------------------
+SUPPORTED_LANGUAGES = ("uz", "en", "ru", "it", "ar")
+
+
 class RegisterBody(BaseModel):
     email: EmailStr
     password: str
     name: str
+    preferred_language: Optional[str] = None
 
 
 class LoginBody(BaseModel):
@@ -149,6 +224,21 @@ class BookBody(BaseModel):
     language: str = "English"
     genre: str = "Fiction"
     status: str = "Available"
+    isbn: Optional[str] = None
+
+
+BOOK_STATUSES = ("Available", "Reserved", "Swapped")
+
+
+class BookUpdate(BaseModel):
+    """Partial update: only the fields the client sends are changed."""
+    title: Optional[str] = None
+    author: Optional[str] = None
+    cover_url: Optional[str] = None
+    condition: Optional[str] = None
+    language: Optional[str] = None
+    genre: Optional[str] = None
+    status: Optional[str] = None
     isbn: Optional[str] = None
 
 
@@ -213,22 +303,22 @@ def match_info(me: dict, other: dict, shelf_genres: Optional[set] = None) -> dic
     }
 
 
-def public_user(u: dict) -> dict:
+def public_user(u: dict, private: bool = False) -> dict:
+    """Serialize a user. Email and exact coordinates are only included for the
+    user's own account (private=True); other readers only get neighborhood-level info
+    plus a server-computed distance."""
     if not u:
         return {}
     swaps = u.get("swaps_count", 0)
-    return {
+    out = {
         "reading_interests": u.get("reading_interests", []),
         "badges": compute_badges(swaps),
         "user_id": u["user_id"],
         "name": u.get("name", ""),
-        "email": u.get("email", ""),
         "avatar_url": u.get("avatar_url"),
         "bio": u.get("bio", ""),
         "city": u.get("city", "Messina"),
         "neighborhood": u.get("neighborhood", "Centro"),
-        "lat": u.get("lat"),
-        "lng": u.get("lng"),
         "genres": u.get("genres", []),
         "languages": u.get("languages", []),
         "is_exchanging": u.get("is_exchanging", True),
@@ -237,6 +327,9 @@ def public_user(u: dict) -> dict:
         "swaps_count": u.get("swaps_count", 0),
         "preferred_language": u.get("preferred_language"),
     }
+    if private:
+        out.update({"email": u.get("email", ""), "lat": u.get("lat"), "lng": u.get("lng")})
+    return out
 
 
 def clean_book(b: dict) -> dict:
@@ -302,6 +395,9 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
 
 @api.post("/auth/register")
 async def register(body: RegisterBody):
+    # bcrypt only uses the first 72 bytes and (v5+) refuses longer input, so say so up front.
+    if len(body.password.encode()) > 72:
+        raise HTTPException(status_code=400, detail="Password is too long (maximum 72 bytes)")
     existing = await db.users.find_one({"email": body.email.lower()})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -323,13 +419,14 @@ async def register(body: RegisterBody):
         "rating": 0.0,
         "rating_count": 0,
         "swaps_count": 0,
-        "preferred_language": None,
+        # The language picked on the first-run screen; unknown values are ignored, not an error.
+        "preferred_language": body.preferred_language if body.preferred_language in SUPPORTED_LANGUAGES else None,
         "created_at": now_utc(),
         "deleted_at": None,
     }
     await db.users.insert_one(user)
     token = await create_session(uid)
-    return {"session_token": token, "user": public_user(user)}
+    return {"session_token": token, "user": public_user(user, private=True)}
 
 
 @api.post("/auth/login")
@@ -338,21 +435,137 @@ async def login(body: LoginBody):
     if not user or not user.get("password_hash") or not verify_pw(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = await create_session(user["user_id"])
-    return {"session_token": token, "user": public_user(user)}
+    return {"session_token": token, "user": public_user(user, private=True)}
+
+
+# --- Google sign-in -----------------------------------------------------------
+# Flow: the app opens /auth/google/start in a browser -> Google -> /auth/google/callback (this API
+# exchanges the code with our client secret and finds/creates the user) -> back to the app with a
+# one-time `session_id` -> the app POSTs it to /auth/session and receives a normal session token.
+def _google_configured() -> bool:
+    return bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+
+
+def _allowed_app_redirect(url: str) -> bool:
+    """Only send the one-time login id back to the app itself, never to an arbitrary site."""
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return False
+    if p.scheme in APP_URL_SCHEMES:
+        return True
+    if p.scheme in ("http", "https") and p.hostname and p.username is None:
+        if f"{p.scheme}://{p.netloc}" in APP_REDIRECT_ORIGINS:
+            return True
+        if p.scheme == "http" and p.hostname in ("localhost", "127.0.0.1"):
+            return True
+    return False
+
+
+def _app_redirect(url: str, **params) -> RedirectResponse:
+    return RedirectResponse(url + ("&" if "?" in url else "?") + urlencode(params), status_code=302)
+
+
+def _google_claims(tok: dict) -> Optional[dict]:
+    """Claims of the id_token Google returned from its token endpoint over TLS. It was obtained with our
+    client secret, so the signature needn't be re-verified, but audience, issuer, expiry and a verified
+    email are still enforced."""
+    try:
+        payload = tok["id_token"].split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        if claims.get("aud") != GOOGLE_CLIENT_ID or claims.get("iss") not in GOOGLE_ISSUERS:
+            return None
+        if int(claims.get("exp", 0)) < time.time():
+            return None
+        if not claims.get("email") or claims.get("email_verified") not in (True, "true"):
+            return None
+        return claims
+    except Exception:
+        return None
+
+
+@api.get("/auth/providers")
+async def auth_providers():
+    return {"google": _google_configured()}
+
+
+@api.get("/auth/google/start")
+async def google_start(request: Request, redirect: str):
+    if not _google_configured():
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured")
+    if not _allowed_app_redirect(redirect):
+        raise HTTPException(status_code=400, detail="Redirect URL not allowed")
+    state = secrets.token_urlsafe(32)
+    await db.oauth_states.insert_one({"state": state, "redirect": redirect, "created_at": now_utc()})
+    callback = (PUBLIC_BACKEND_URL or str(request.base_url).rstrip("/")) + "/api/auth/google/callback"
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": callback,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "prompt": "select_account",
+    }
+    return RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}", status_code=302)
+
+
+@api.get("/auth/google/callback")
+async def google_callback(request: Request, state: str = "", code: str = "", error: str = ""):
+    # `state` is single-use and short-lived; without a valid one this isn't a sign-in we started.
+    rec = await db.oauth_states.find_one_and_delete({"state": state}) if state else None
+    if not rec or (now_utc() - rec["created_at"].replace(tzinfo=timezone.utc)) > timedelta(minutes=10):
+        raise HTTPException(status_code=400, detail="Invalid or expired sign-in attempt")
+    redirect = rec["redirect"]
+    if error or not code:
+        return _app_redirect(redirect, google_error=error or "cancelled")
+    callback = (PUBLIC_BACKEND_URL or str(request.base_url).rstrip("/")) + "/api/auth/google/callback"
+    try:
+        async with httpx.AsyncClient(timeout=20) as hc:
+            resp = await hc.post(
+                GOOGLE_TOKEN_URL,
+                data={
+                    "code": code,
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "redirect_uri": callback,
+                    "grant_type": "authorization_code",
+                },
+            )
+        tok = resp.json() if resp.status_code == 200 else None
+    except (httpx.HTTPError, ValueError) as e:
+        logger.warning(f"Google token exchange failed: {e!r}")
+        tok = None
+    claims = _google_claims(tok) if tok else None
+    user = await _google_user(claims) if claims else None
+    if not user:
+        return _app_redirect(redirect, google_error="failed")
+    sid = secrets.token_urlsafe(32)
+    await db.google_logins.insert_one({"sid": sid, "user_id": user["user_id"], "created_at": now_utc()})
+    return _app_redirect(redirect, session_id=sid)
 
 
 @api.post("/auth/session")
 async def google_session(body: SessionBody):
-    async with httpx.AsyncClient(timeout=30) as hc:
-        resp = await hc.get(EMERGENT_AUTH_URL, headers={"X-Session-ID": body.session_id})
-    if resp.status_code != 200:
+    """Redeem the one-time id from a completed Google sign-in for a normal app session."""
+    rec = await db.google_logins.find_one_and_delete({"sid": body.session_id})
+    if not rec or (now_utc() - rec["created_at"].replace(tzinfo=timezone.utc)) > timedelta(minutes=2):
         raise HTTPException(status_code=401, detail="Invalid session")
-    data = resp.json()
-    email = (data.get("email") or "").lower()
-    name = data.get("name") or email.split("@")[0]
-    picture = data.get("picture")
+    user = await db.users.find_one({"user_id": rec["user_id"], "deleted_at": None}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    token = await create_session(user["user_id"])
+    return {"session_token": token, "user": public_user(user, private=True)}
+
+
+async def _google_user(claims: dict) -> Optional[dict]:
+    """Find the account for a verified Google email, or create it."""
+    email = claims["email"].lower()
+    name = claims.get("name") or email.split("@")[0]
+    picture = claims.get("picture")
     user = await db.users.find_one({"email": email})
     if user:
+        if user.get("deleted_at"):
+            return None
         uid = user["user_id"]
         if picture and not user.get("avatar_url"):
             await db.users.update_one({"user_id": uid}, {"$set": {"avatar_url": picture}})
@@ -381,13 +594,12 @@ async def google_session(body: SessionBody):
             "deleted_at": None,
         }
         await db.users.insert_one(user)
-    token = await create_session(uid)
-    return {"session_token": token, "user": public_user(user)}
+    return user
 
 
 @api.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
-    return {"user": public_user(user)}
+    return {"user": public_user(user, private=True)}
 
 
 @api.post("/auth/logout")
@@ -404,10 +616,12 @@ async def logout(authorization: Optional[str] = Header(None)):
 @api.put("/users/me")
 async def update_me(body: ProfileUpdate, user: dict = Depends(get_current_user)):
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "preferred_language" in updates and updates["preferred_language"] not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail="Unsupported language")
     if updates:
         await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
     fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
-    return {"user": public_user(fresh)}
+    return {"user": public_user(fresh, private=True)}
 
 
 async def _books_for(owner_id: str, only_available: bool = False):
@@ -428,7 +642,7 @@ async def get_user(user_id: str, user: dict = Depends(get_current_user)):
         rater = await db.users.find_one({"user_id": r["rater_id"]}, {"_id": 0})
         r["rater_name"] = rater.get("name") if rater else "Someone"
         r["rater_avatar"] = rater.get("avatar_url") if rater else None
-    pu = public_user(u)
+    pu = public_user(u, private=(user_id == user["user_id"]))
     pu["distance_km"] = haversine_km(user.get("lat"), user.get("lng"), u.get("lat"), u.get("lng"))
     books = await _books_for(user_id)
     pu.update(match_info(user, u, {b["genre"] for b in books if b["status"] == "Available"}))
@@ -467,13 +681,40 @@ async def add_book(body: BookBody, user: dict = Depends(get_current_user)):
     return {"book": clean_book(book)}
 
 
+async def _book_in_active_swap(book_id: str) -> bool:
+    """True while an accepted/active swap holds this book in its proposal."""
+    return bool(
+        await db.swaps.find_one(
+            {
+                "status": {"$in": ["accepted", "active"]},
+                "$or": [
+                    {"active_proposal.offered_book_id": book_id},
+                    {"active_proposal.requested_book_id": book_id},
+                ],
+            },
+            {"_id": 1},
+        )
+    )
+
+
 @api.put("/books/{book_id}")
-async def update_book(book_id: str, body: BookBody, user: dict = Depends(get_current_user)):
+async def update_book(book_id: str, body: BookUpdate, user: dict = Depends(get_current_user)):
     book = await db.books.find_one({"id": book_id, "owner_id": user["user_id"], "deleted_at": None})
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
-    updates = body.model_dump()
-    await db.books.update_one({"id": book_id}, {"$set": updates})
+    # Partial update: fields the client didn't send keep their stored value.
+    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None or k == "cover_url"}
+    if "title" in updates and not updates["title"].strip():
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    if "status" in updates:
+        if updates["status"] not in BOOK_STATUSES:
+            raise HTTPException(status_code=400, detail="Invalid status")
+        if updates["status"] == book.get("status"):
+            updates.pop("status")
+        elif await _book_in_active_swap(book_id):
+            raise HTTPException(status_code=409, detail="This book is part of an active swap; cancel the swap first")
+    if updates:
+        await db.books.update_one({"id": book_id}, {"$set": updates})
     fresh = await db.books.find_one({"id": book_id}, {"_id": 0})
     return {"book": clean_book(fresh)}
 
@@ -602,6 +843,8 @@ async def book_isbn(isbn: str, user: dict = Depends(get_current_user)):
 
 @api.delete("/books/{book_id}")
 async def delete_book(book_id: str, user: dict = Depends(get_current_user)):
+    if await _book_in_active_swap(book_id):
+        raise HTTPException(status_code=409, detail="This book is part of an active swap; cancel the swap first")
     res = await db.books.update_one(
         {"id": book_id, "owner_id": user["user_id"]}, {"$set": {"deleted_at": now_utc()}}
     )
@@ -630,7 +873,7 @@ async def discover_people(
     if language and language != "All":
         q["languages"] = language
     if search:
-        q["name"] = {"$regex": search, "$options": "i"}
+        q["name"] = {"$regex": re.escape(search), "$options": "i"}
     people = await db.users.find(q, {"_id": 0}).to_list(200)
     result = []
     for p in people:
@@ -662,9 +905,10 @@ async def discover_books(
     if language and language != "All":
         q["language"] = language
     if search:
+        pattern = re.escape(search)
         q["$or"] = [
-            {"title": {"$regex": search, "$options": "i"}},
-            {"author": {"$regex": search, "$options": "i"}},
+            {"title": {"$regex": pattern, "$options": "i"}},
+            {"author": {"$regex": pattern, "$options": "i"}},
         ]
     books = await db.books.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
     out = []
@@ -794,20 +1038,43 @@ async def map_clusters(user: dict = Depends(get_current_user)):
 # ----------------------------------------------------------------------------
 # Swaps
 # ----------------------------------------------------------------------------
-async def _add_message(swap_id: str, sender_id: Optional[str], mtype: str, text: str = "", proposal: dict = None, image_url: str = None):
+async def _add_message(
+    swap_id: str,
+    sender_id: Optional[str],
+    mtype: str,
+    text: str = "",
+    proposal: dict = None,
+    image_url: str = None,
+    key: Optional[str] = None,
+    params: Optional[dict] = None,
+):
+    """Store a chat message. System/proposal messages also carry an i18n `key` + `params` so each
+    client renders them in its own language; `text` stays as the English fallback for old clients
+    and for rows written before keys existed."""
     msg = {
         "id": new_id("msg"),
         "swap_id": swap_id,
         "sender_id": sender_id,
         "type": mtype,
         "text": text,
+        "key": key,
+        "params": params or {},
         "proposal": proposal,
         "image_url": image_url,
         "created_at": now_utc(),
     }
     await db.messages.insert_one(dict(msg))
-    label = "📷 Photo" if mtype == "image" else (text or mtype)
-    await db.swaps.update_one({"id": swap_id}, {"$set": {"updated_at": now_utc(), "last_message": label}})
+    if mtype == "image":
+        last, last_key, last_params = "📷 Photo", "swapChat.sys.photo", {}
+    elif key:
+        last, last_key, last_params = text, key, params or {}
+    else:
+        last, last_key, last_params = (text or mtype), None, {}
+    await db.swaps.update_one(
+        {"id": swap_id},
+        {"$set": {"updated_at": now_utc(), "last_message": last,
+                  "last_message_key": last_key, "last_message_params": last_params}},
+    )
     return msg
 
 
@@ -818,6 +1085,8 @@ def clean_swap(s: dict) -> dict:
         "receiver_id": s["receiver_id"],
         "status": s["status"],
         "last_message": s.get("last_message", ""),
+        "last_message_key": s.get("last_message_key"),
+        "last_message_params": s.get("last_message_params") or {},
         "requester_completed": s.get("requester_completed", False),
         "receiver_completed": s.get("receiver_completed", False),
         "requester_rated": s.get("requester_rated", False),
@@ -869,7 +1138,8 @@ async def create_swap(body: SwapCreate, user: dict = Depends(get_current_user)):
         "updated_at": now_utc(),
     }
     await db.swaps.insert_one(swap)
-    await _add_message(swap["id"], None, "system", f"{user['name']} is interested in exchanging books.")
+    await _add_message(swap["id"], None, "system", f"{user['name']} is interested in exchanging books.",
+                       key="swapChat.sys.interested", params={"name": user["name"]})
     if body.message:
         await _add_message(swap["id"], user["user_id"], "text", body.message)
     return {"swap": await _swap_with_meta(swap, user["user_id"]), "existing": False}
@@ -917,11 +1187,36 @@ async def get_swap(swap_id: str, user: dict = Depends(get_current_user)):
     return {"swap": meta, "messages": msgs, "my_books": my_books, "their_books": their_books}
 
 
-@api.post("/swaps/{swap_id}/messages")
-async def send_message(swap_id: str, body: MessageBody, user: dict = Depends(get_current_user)):
+async def _participant_swap(swap_id: str, user: dict) -> dict:
+    """Load a swap the caller takes part in, or 404 (never reveal other people's swaps)."""
     s = await db.swaps.find_one({"id": swap_id})
     if not s or user["user_id"] not in (s["requester_id"], s["receiver_id"]):
         raise HTTPException(status_code=404, detail="Swap not found")
+    return s
+
+
+def _require_status(s: dict, *allowed: str) -> None:
+    if s["status"] not in allowed:
+        raise HTTPException(status_code=409, detail=f"Swap is {s['status']}; action not allowed")
+
+
+async def _set_proposal_books(proposal: Optional[dict], from_status: str, to_status: str) -> None:
+    if not proposal:
+        return
+    for bid in (proposal.get("offered_book_id"), proposal.get("requested_book_id")):
+        if bid:
+            await db.books.update_one({"id": bid, "status": from_status}, {"$set": {"status": to_status}})
+
+
+async def _release_books(book_ids: List[str]) -> None:
+    for bid in book_ids:
+        await db.books.update_one({"id": bid, "status": "Reserved"}, {"$set": {"status": "Available"}})
+
+
+@api.post("/swaps/{swap_id}/messages")
+async def send_message(swap_id: str, body: MessageBody, user: dict = Depends(get_current_user)):
+    s = await _participant_swap(swap_id, user)
+    _require_status(s, "pending", "accepted", "active", "completed")
     if not body.text.strip() and not body.image_url:
         raise HTTPException(status_code=400, detail="Empty message")
     mtype = "image" if body.image_url else "text"
@@ -932,59 +1227,93 @@ async def send_message(swap_id: str, body: MessageBody, user: dict = Depends(get
 
 @api.post("/swaps/{swap_id}/propose")
 async def propose(swap_id: str, body: ProposeBody, user: dict = Depends(get_current_user)):
-    s = await db.swaps.find_one({"id": swap_id})
-    if not s or user["user_id"] not in (s["requester_id"], s["receiver_id"]):
-        raise HTTPException(status_code=404, detail="Swap not found")
+    s = await _participant_swap(swap_id, user)
+    _require_status(s, "pending")
+    other_id = s["receiver_id"] if s["requester_id"] == user["user_id"] else s["requester_id"]
+    offered = await db.books.find_one(
+        {"id": body.offered_book_id, "owner_id": user["user_id"], "status": "Available", "deleted_at": None}, {"_id": 0}
+    )
+    requested = await db.books.find_one(
+        {"id": body.requested_book_id, "owner_id": other_id, "status": "Available", "deleted_at": None}, {"_id": 0}
+    )
+    if not offered:
+        raise HTTPException(status_code=400, detail="Offered book must be one of your available books")
+    if not requested:
+        raise HTTPException(status_code=400, detail="Requested book must be an available book of the other reader")
     proposal = {
         "proposer_id": user["user_id"],
         "offered_book_id": body.offered_book_id,
         "requested_book_id": body.requested_book_id,
     }
-    await db.swaps.update_one({"id": swap_id}, {"$set": {"active_proposal": proposal, "status": "accepted" if s["status"] == "accepted" else "pending"}})
-    offered = await db.books.find_one({"id": body.offered_book_id}, {"_id": 0})
-    requested = await db.books.find_one({"id": body.requested_book_id}, {"_id": 0})
-    text = f"Proposed a swap: '{(offered or {}).get('title','?')}' ⇄ '{(requested or {}).get('title','?')}'"
-    await _add_message(swap_id, user["user_id"], "proposal", text, proposal)
+    # Status-guarded so a concurrent accept/decline/cancel can't be overwritten.
+    res = await db.swaps.update_one({"id": swap_id, "status": "pending"}, {"$set": {"active_proposal": proposal}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Swap is no longer pending")
+    text = f"Proposed a swap: '{offered['title']}' ⇄ '{requested['title']}'"
+    await _add_message(swap_id, user["user_id"], "proposal", text, proposal, key="swapChat.sys.proposed",
+                       params={"offered": offered["title"], "requested": requested["title"]})
     return {"ok": True}
 
 
 @api.post("/swaps/{swap_id}/accept")
 async def accept_swap(swap_id: str, user: dict = Depends(get_current_user)):
-    s = await db.swaps.find_one({"id": swap_id})
-    if not s or user["user_id"] not in (s["requester_id"], s["receiver_id"]):
-        raise HTTPException(status_code=404, detail="Swap not found")
+    s = await _participant_swap(swap_id, user)
+    _require_status(s, "pending")
     proposal = s.get("active_proposal")
-    await db.swaps.update_one({"id": swap_id}, {"$set": {"status": "active"}})
-    if proposal:
-        for bid in (proposal.get("offered_book_id"), proposal.get("requested_book_id")):
-            if bid:
-                await db.books.update_one({"id": bid, "status": "Available"}, {"$set": {"status": "Reserved"}})
-    await _add_message(swap_id, user["user_id"], "system", "Swap confirmed! Arrange to meet locally.")
+    if not proposal:
+        raise HTTPException(status_code=400, detail="No proposal to accept")
+    if proposal.get("proposer_id") == user["user_id"]:
+        raise HTTPException(status_code=403, detail="You cannot accept your own proposal")
+    # Claim each book with a conditional update (Available -> Reserved). Exactly one of
+    # several swaps racing for the same book can win it; the loser rolls back and gets 409.
+    claimed: List[str] = []
+    for bid in (proposal["offered_book_id"], proposal["requested_book_id"]):
+        got = await db.books.update_one(
+            {"id": bid, "status": "Available", "deleted_at": None}, {"$set": {"status": "Reserved"}}
+        )
+        if got.modified_count == 0:
+            await _release_books(claimed)
+            raise HTTPException(status_code=409, detail="One of the proposed books is no longer available")
+        claimed.append(bid)
+    res = await db.swaps.update_one({"id": swap_id, "status": "pending"}, {"$set": {"status": "active"}})
+    if res.matched_count == 0:
+        await _release_books(claimed)
+        raise HTTPException(status_code=409, detail="Swap is no longer pending")
+    await _add_message(swap_id, user["user_id"], "system", "Swap confirmed! Arrange to meet locally.",
+                       key="swapChat.sys.confirmed")
     return {"ok": True}
 
 
 @api.post("/swaps/{swap_id}/decline")
 async def decline_swap(swap_id: str, user: dict = Depends(get_current_user)):
-    s = await db.swaps.find_one({"id": swap_id})
-    if not s or user["user_id"] not in (s["requester_id"], s["receiver_id"]):
-        raise HTTPException(status_code=404, detail="Swap not found")
-    await db.swaps.update_one({"id": swap_id}, {"$set": {"status": "declined"}})
-    await _add_message(swap_id, user["user_id"], "system", f"{user['name']} declined the swap.")
+    s = await _participant_swap(swap_id, user)
+    _require_status(s, "pending")
+    proposal = s.get("active_proposal")
+    if proposal and proposal.get("proposer_id") == user["user_id"]:
+        raise HTTPException(status_code=403, detail="Use cancel to withdraw your own proposal")
+    res = await db.swaps.update_one({"id": swap_id, "status": "pending"}, {"$set": {"status": "declined"}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Swap is no longer pending")
+    await _add_message(swap_id, user["user_id"], "system", f"{user['name']} declined the swap.",
+                       key="swapChat.sys.declined", params={"name": user["name"]})
     return {"ok": True}
 
 
 @api.post("/swaps/{swap_id}/cancel")
 async def cancel_swap(swap_id: str, user: dict = Depends(get_current_user)):
-    s = await db.swaps.find_one({"id": swap_id})
-    if not s or user["user_id"] not in (s["requester_id"], s["receiver_id"]):
-        raise HTTPException(status_code=404, detail="Swap not found")
-    proposal = s.get("active_proposal")
-    if proposal:
-        for bid in (proposal.get("offered_book_id"), proposal.get("requested_book_id")):
-            if bid:
-                await db.books.update_one({"id": bid, "status": "Reserved"}, {"$set": {"status": "Available"}})
-    await db.swaps.update_one({"id": swap_id}, {"$set": {"status": "cancelled"}})
-    await _add_message(swap_id, user["user_id"], "system", f"{user['name']} cancelled the swap.")
+    s = await _participant_swap(swap_id, user)
+    _require_status(s, "pending", "accepted", "active")
+    res = await db.swaps.update_one(
+        {"id": swap_id, "status": {"$in": ["pending", "accepted", "active"]}}, {"$set": {"status": "cancelled"}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Swap can no longer be cancelled")
+    # Books are only reserved once the swap is confirmed; a pending swap must not
+    # release a book that a different swap may have reserved.
+    if s["status"] in ("accepted", "active"):
+        await _set_proposal_books(s.get("active_proposal"), "Reserved", "Available")
+    await _add_message(swap_id, user["user_id"], "system", f"{user['name']} cancelled the swap.",
+                       key="swapChat.sys.cancelled", params={"name": user["name"]})
     return {"ok": True}
 
 
@@ -998,17 +1327,18 @@ async def _recompute_rating(user_id: str):
 
 @api.post("/swaps/{swap_id}/complete")
 async def complete_swap(swap_id: str, user: dict = Depends(get_current_user)):
-    s = await db.swaps.find_one({"id": swap_id})
-    if not s or user["user_id"] not in (s["requester_id"], s["receiver_id"]):
-        raise HTTPException(status_code=404, detail="Swap not found")
-    if s["status"] not in ("active", "completed"):
-        raise HTTPException(status_code=400, detail="Swap is not active")
+    s = await _participant_swap(swap_id, user)
+    _require_status(s, "active")
     field = "requester_completed" if s["requester_id"] == user["user_id"] else "receiver_completed"
-    await db.swaps.update_one({"id": swap_id}, {"$set": {field: True}})
-    s = await db.swaps.find_one({"id": swap_id})
+    await db.swaps.update_one({"id": swap_id, "status": "active"}, {"$set": {field: True}})
     new_badges = []
-    if s.get("requester_completed") and s.get("receiver_completed") and s["status"] != "completed":
-        await db.swaps.update_one({"id": swap_id}, {"$set": {"status": "completed"}})
+    # Atomic transition: only the request that flips active -> completed awards
+    # swaps_count, so concurrent confirmations can't double-count.
+    flipped = await db.swaps.update_one(
+        {"id": swap_id, "status": "active", "requester_completed": True, "receiver_completed": True},
+        {"$set": {"status": "completed"}},
+    )
+    if flipped.modified_count == 1:
         for uid in (s["requester_id"], s["receiver_id"]):
             u = await db.users.find_one({"user_id": uid}, {"_id": 0})
             before = earned_badge_ids(u.get("swaps_count", 0)) if u else []
@@ -1016,30 +1346,29 @@ async def complete_swap(swap_id: str, user: dict = Depends(get_current_user)):
             after = earned_badge_ids((u.get("swaps_count", 0) if u else 0) + 1)
             unlocked = [b for b in BADGES if b["id"] in after and b["id"] not in before]
             for b in unlocked:
-                await _add_message(swap_id, None, "system", f"🏅 {u.get('name', 'Someone')} unlocked the {b['label']} badge!")
+                await _add_message(swap_id, None, "system", f"🏅 {u.get('name', 'Someone')} unlocked the {b['label']} badge!",
+                                   key="swapChat.sys.badgeUnlocked",
+                                   params={"name": u.get("name", ""), "badge": b["id"]})
             if uid == user["user_id"]:
                 new_badges = unlocked
-        proposal = s.get("active_proposal")
-        if proposal:
-            for bid in (proposal.get("offered_book_id"), proposal.get("requested_book_id")):
-                if bid:
-                    await db.books.update_one({"id": bid}, {"$set": {"status": "Swapped"}})
-        await _add_message(swap_id, None, "system", "Swap completed! Leave a rating.")
+        await _set_proposal_books(s.get("active_proposal"), "Reserved", "Swapped")
+        await _add_message(swap_id, None, "system", "Swap completed! Leave a rating.", key="swapChat.sys.completed")
     else:
-        await _add_message(swap_id, user["user_id"], "system", f"{user['name']} marked the swap complete.")
+        await _add_message(swap_id, user["user_id"], "system", f"{user['name']} marked the swap complete.",
+                           key="swapChat.sys.markedComplete", params={"name": user["name"]})
     return {"ok": True, "new_badges": new_badges}
 
 
 @api.post("/swaps/{swap_id}/rate")
 async def rate_swap(swap_id: str, body: RateBody, user: dict = Depends(get_current_user)):
-    s = await db.swaps.find_one({"id": swap_id})
-    if not s or user["user_id"] not in (s["requester_id"], s["receiver_id"]):
-        raise HTTPException(status_code=404, detail="Swap not found")
+    s = await _participant_swap(swap_id, user)
     if s["status"] != "completed":
         raise HTTPException(status_code=400, detail="Swap not completed yet")
     ratee_id = s["receiver_id"] if s["requester_id"] == user["user_id"] else s["requester_id"]
     field = "requester_rated" if s["requester_id"] == user["user_id"] else "receiver_rated"
-    if s.get(field):
+    # Claim the "rated" flag atomically first so a double-submit can't create two ratings.
+    claimed = await db.swaps.update_one({"id": swap_id, field: {"$ne": True}}, {"$set": {field: True}})
+    if claimed.modified_count == 0:
         raise HTTPException(status_code=400, detail="Already rated")
     stars = max(1, min(5, body.stars))
     await db.ratings.insert_one(
@@ -1053,7 +1382,6 @@ async def rate_swap(swap_id: str, body: RateBody, user: dict = Depends(get_curre
             "created_at": now_utc(),
         }
     )
-    await db.swaps.update_one({"id": swap_id}, {"$set": {field: True}})
     await _recompute_rating(ratee_id)
     return {"ok": True}
 
@@ -1079,15 +1407,38 @@ async def notifications(user: dict = Depends(get_current_user)):
 # ----------------------------------------------------------------------------
 # Uploads
 # ----------------------------------------------------------------------------
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
+
+def _sniff_image(data: bytes) -> Optional[tuple]:
+    """Return (extension, content_type) if the bytes look like a supported image."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpg", "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png", "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp", "image/webp"
+    if data[4:8] == b"ftyp" and data[8:12] in (b"heic", b"heix", b"mif1", b"msf1", b"hevc"):
+        return "heic", "image/heic"
+    return None
+
+
 @api.post("/upload")
 async def upload(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    data = await file.read()
-    ext = (file.filename or "img.jpg").split(".")[-1].lower()
-    if ext not in ("jpg", "jpeg", "png", "webp", "heic"):
-        ext = "jpg"
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large (max 8 MB)")
+    kind = _sniff_image(data)
+    if not kind:
+        raise HTTPException(status_code=400, detail="Unsupported file type; upload a JPEG, PNG, WebP or HEIC image")
+    # Type/extension come from the file's actual bytes, not the client-supplied headers.
+    ext, ctype = kind
     path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
-    ctype = file.content_type or "image/jpeg"
-    await run_in_threadpool(put_object, path, data, ctype)
+    try:
+        await run_in_threadpool(put_object, path, data)
+    except OSError as e:
+        logger.error(f"Upload write failed for {path}: {e!r}")
+        raise HTTPException(status_code=500, detail="Could not store the image")
     await db.uploads.insert_one(
         {"path": path, "owner_id": user["user_id"], "content_type": ctype, "created_at": now_utc()}
     )
@@ -1095,12 +1446,30 @@ async def upload(file: UploadFile = File(...), user: dict = Depends(get_current_
 
 
 @api.get("/files/{path:path}")
-async def files(path: str):
+async def files(
+    path: str,
+    exp: Optional[int] = None,
+    sig: Optional[str] = None,
+    authorization: Optional[str] = Header(None),
+):
+    # Access needs either a valid signed URL (what the app receives in API responses) or a session token.
+    if not _valid_file_sig(path, exp, sig):
+        if sig is not None:
+            raise HTTPException(status_code=403, detail="Invalid or expired file link")
+        await get_current_user(authorization)  # raises 401 when missing/invalid
     rec = await db.uploads.find_one({"path": path})
     if not rec:
         raise HTTPException(status_code=404, detail="Not found")
-    content, ctype = await run_in_threadpool(get_object, path)
-    return Response(content=content, media_type=ctype)
+    try:
+        content = await run_in_threadpool(get_object, path)
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
+        raise HTTPException(status_code=404, detail="Not found")
+    return Response(
+        content=content,
+        media_type=rec.get("content_type") or "application/octet-stream",
+        # File names are random and never reused, so the bytes behind a URL never change.
+        headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @api.get("/")
@@ -1121,18 +1490,21 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
+    await load_file_secret()
     await db.users.create_index("email", unique=True)
     await db.users.create_index("user_id", unique=True)
     await db.user_sessions.create_index("session_token", unique=True)
     await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
+    # Short-lived Google sign-in records expire on their own (the code also checks their age).
+    await db.oauth_states.create_index("state", unique=True)
+    await db.oauth_states.create_index("created_at", expireAfterSeconds=600)
+    await db.google_logins.create_index("sid", unique=True)
+    await db.google_logins.create_index("created_at", expireAfterSeconds=120)
     await db.books.create_index("owner_id")
     await db.swaps.create_index("requester_id")
     await db.swaps.create_index("receiver_id")
-    try:
-        await run_in_threadpool(init_storage)
-        logger.info("Storage initialized")
-    except Exception as e:
-        logger.warning(f"Storage init failed: {e}")
+    await run_in_threadpool(init_storage)
+    logger.info(f"File storage: {STORAGE_DIR}")
     try:
         await seed_demo()
         await backfill_seed_interests()

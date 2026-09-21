@@ -26,9 +26,10 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
  * local choice exists yet (e.g. signing in on a new device). Renders nothing.
  */
 function LanguageSync() {
-  const { user } = useAuth();
-  const { syncFromServer } = useLanguage();
+  const { user, setPreferredLanguage } = useAuth();
+  const { language, isReady, needsSelection, syncFromServer } = useLanguage();
   const syncedRef = useRef(false);
+  const pushedForRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (syncedRef.current) return;
@@ -36,6 +37,20 @@ function LanguageSync() {
     syncedRef.current = true;
     syncFromServer(user.preferred_language);
   }, [user?.preferred_language, syncFromServer]);
+
+  // The language picker runs before sign-in/sign-up, so the choice is made while signed out.
+  // Once a user is signed in, save that explicit local choice to their profile (once per account
+  // per session); waiting for isReady avoids pushing the default before storage was read.
+  useEffect(() => {
+    if (!user) {
+      pushedForRef.current = null;
+      return;
+    }
+    if (!isReady || needsSelection) return;
+    if (pushedForRef.current === user.user_id) return;
+    pushedForRef.current = user.user_id;
+    if (user.preferred_language !== language) setPreferredLanguage(language);
+  }, [user, isReady, needsSelection, language, setPreferredLanguage]);
 
   return null;
 }
@@ -60,7 +75,10 @@ function RootNavigator() {
       return;
     }
 
-    if (status === "guest" && !inAuth) {
+    // A guest belongs on the login screen. This includes a guest still sitting on the language
+    // picker: once a language is chosen (needsSelection is false) the picker is done and must
+    // hand over to login, otherwise the Continue button appears to do nothing.
+    if (status === "guest" && (!inAuth || onLanguageScreen)) {
       router.replace("/(auth)/login");
     } else if (status === "authed" && (inAuth || segments.length === 0)) {
       router.replace("/(tabs)/discover");

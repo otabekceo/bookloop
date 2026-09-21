@@ -255,6 +255,17 @@
     "lookupFailed": "Lookup failed — enter details manually"
   },
   "swapChat": {
+    "sys": {
+      "interested": "{{name}} is interested in exchanging books.",
+      "proposed": "Proposed a swap: “{{offered}}” ⇄ “{{requested}}”",
+      "confirmed": "Swap confirmed! Arrange to meet locally.",
+      "declined": "{{name}} declined the swap.",
+      "cancelled": "{{name}} cancelled the swap.",
+      "markedComplete": "{{name}} marked the swap complete.",
+      "completed": "Swap completed! Leave a rating.",
+      "badgeUnlocked": "🏅 {{name}} unlocked the {{badge}} badge!",
+      "photo": "📷 Photo"
+    },
     "proposalTitle": "Swap proposal",
     "decline": "Decline",
     "accept": "Accept",
@@ -328,6 +339,12 @@
     "couldNotSave": "Could not save"
   },
   "badges": {
+    "names": {
+      "first_loop": "First Loop",
+      "regular": "Loop Regular",
+      "bookworm": "Bookworm",
+      "legend": "Loop Legend"
+    },
     "progress": "{{count}} more swap to unlock {{label}}",
     "progress_plural": "{{count}} more swaps to unlock {{label}}",
     "allUnlocked": "You've unlocked every badge — legend status!"

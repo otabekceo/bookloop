@@ -1,5 +1,5 @@
 // Design tokens for BookLoop — "Warm Editorial" light theme.
-// Keys match the "color" block of /app/design_guidelines.json.
+// Keys match the "color" block of docs/design_guidelines.json.
 
 import { useMemo } from "react";
 import { Appearance, StyleSheet, useColorScheme } from "react-native";

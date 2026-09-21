@@ -2,7 +2,11 @@ import { Platform } from "react-native";
 
 import { storage } from "@/src/utils/storage";
 
-const BASE = process.env.EXPO_PUBLIC_BACKEND_URL as string;
+const BASE = ((process.env.EXPO_PUBLIC_BACKEND_URL as string | undefined) || "").replace(/\/+$/, "");
+export const API_BASE = BASE;
+
+const MISSING_BASE_MESSAGE =
+  "The BookLoop backend address is not set. Add EXPO_PUBLIC_BACKEND_URL to frontend/.env and restart Metro with `npx expo start -c`.";
 export const TOKEN_KEY = "bookloop_session_token";
 
 let memToken: string | null = null;
@@ -42,8 +46,21 @@ type Options = {
   headers?: Record<string, string>;
 };
 
+// Called when a request that carried a session token comes back 401 (expired or revoked
+// session), so the app can drop back to the login screen instead of failing every call.
+let onUnauthorized: ((usedToken: string) => void) | null = null;
+
+export function setUnauthorizedHandler(fn: ((usedToken: string) => void) | null) {
+  onUnauthorized = fn;
+}
+
+// Credential-exchange endpoints never need (or should send) an existing session token.
+const NO_TOKEN_PATHS = ["/api/auth/login", "/api/auth/register", "/api/auth/session"];
+
 export async function apiFetch<T = any>(path: string, opts: Options = {}): Promise<T> {
-  const token = await getToken();
+  if (!BASE) throw new ApiError(MISSING_BASE_MESSAGE, 0);
+  const sendToken = !NO_TOKEN_PATHS.some((p) => path.startsWith(p));
+  const token = sendToken ? await getToken() : null;
   const headers: Record<string, string> = { ...(opts.headers || {}) };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -52,6 +69,7 @@ export async function apiFetch<T = any>(path: string, opts: Options = {}): Promi
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
+  if (res.status === 401 && token) onUnauthorized?.(token);
   if (!res.ok) {
     let msg = `Request failed (${res.status})`;
     try {

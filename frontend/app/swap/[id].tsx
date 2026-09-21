@@ -14,6 +14,7 @@ import { pickImage, uploadWithProgress, openSettings } from "@/src/media";
 import { useAuth } from "@/src/auth";
 import { makeStyles, useTheme } from "@/src/theme";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
+import { renderKeyed, badgeLabel } from "@/src/i18n/messageKeys";
 
 const STATUS_KEYS: Record<string, string> = {
   pending: "swaps.statusPending",
@@ -121,7 +122,7 @@ export default function SwapChat() {
       return (
         <View style={styles.systemWrap}>
           <AppText variant="caption" color={colors.muted} style={{ textAlign: "center" }}>
-            {item.text}
+            {renderKeyed(t, item)}
           </AppText>
         </View>
       );
@@ -259,8 +260,8 @@ export default function SwapChat() {
                 disabled={iCompleted}
                 onPress={() =>
                   act(async () => {
-                    const r = await apiFetch<{ new_badges?: { label: string }[] }>(`/api/swaps/${id}/complete`, { method: "POST" });
-                    if (r.new_badges?.length) toast(t("swapChat.badgeUnlocked", { labels: r.new_badges.map((b) => b.label).join(", ") }), "success");
+                    const r = await apiFetch<{ new_badges?: { id: string; label: string }[] }>(`/api/swaps/${id}/complete`, { method: "POST" });
+                    if (r.new_badges?.length) toast(t("swapChat.badgeUnlocked", { labels: r.new_badges.map((b) => badgeLabel(t, b)).join(", ") }), "success");
                   }, "success")
                 }
               />

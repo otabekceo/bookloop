@@ -78,12 +78,12 @@
   "auth": {
     "welcomeBack": "Xush kelibsiz",
     "joinLoop": "Davraga qo'shiling",
-    "signInSubtitle": "Atrofingizdagi o'quvchilarni topish uchun kiring.",
+    "signInSubtitle": "Atrofingizdagi ishtiyoqmandlarni topish uchun kiring.",
     "registerSubtitle": "Hisob yarating va kitoblarni mahalliy almashishni boshlang.",
     "name": "Ism",
     "namePlaceholder": "Ismingiz",
     "email": "Email",
-    "emailPlaceholder": "siz@misol.com",
+    "emailPlaceholder": "siz@gmail.com",
     "password": "Parol",
     "signIn": "Kirish",
     "createAccount": "Hisob yaratish",
@@ -124,8 +124,8 @@
   "map": {
     "city": "Messina",
     "densityTitle": "Faol almashuvchilar zichligi",
-    "readersNearby": "Yaqin atrofda {{count}} o'quvchi",
-    "readersNearby_plural": "Yaqin atrofda {{count}} o'quvchi",
+    "readersNearby": "Yaqin atrofda {{count}} ishtiyoqmandlar",
+    "readersNearby_plural": "Yaqin atrofda {{count}} ishtiyoqmandlar",
     "clusterHint": "hozir {{count}} kitobni almashishga tayyor · klasterga bosing",
     "clusterHint_plural": "hozir {{count}} kitobni almashishga tayyor · klasterga bosing",
     "activeExchangers": "faol almashuvchilar",
@@ -155,7 +155,7 @@
     "tabDone": "Tugallangan",
     "tapToOpen": "Suhbatni ochish uchun bosing",
     "emptyTitle": "Bu yerda hozircha hech narsa yo'q",
-    "emptyBody": "Yaqin atrofdagi o'quvchilarni toping va boshlash uchun almashuv so'rang.",
+    "emptyBody": "Yaqin atrofdagi kitob ixlosmandlarini toping va boshlash uchun almashuv so'rang.",
     "statusPending": "Kutilmoqda",
     "statusActive": "Faol",
     "statusCompleted": "Tugallangan",
@@ -164,7 +164,7 @@
   },
   "profile": {
     "currentlyExchanging": "Hozir almashmoqda",
-    "visibleNearby": "Yaqin atrofdagi o'quvchilarga ko'rinadi",
+    "visibleNearby": "Yaqin atrofdagi kitob ixlosmandlarini ko'rinadi",
     "hiddenFromDiscovery": "Kashf etishdan yashirilgan",
     "inviteTitle": "Do'stlarni taklif qiling",
     "inviteBody": "Kitobxonlar guruhingizni mahalliy davraga olib keling",
@@ -202,8 +202,8 @@
   "bookDetail": {
     "title": "Kitob",
     "editBook": "Kitobni tahrirlash",
-    "wantedBy": "Yaqin atrofda {{count}} o'quvchi {{genre}} kitoblarini izlaydi",
-    "wantedBy_plural": "Yaqin atrofda {{count}} o'quvchi {{genre}} kitoblarini izlaydi",
+    "wantedBy": "Yaqin atrofda {{count}} kitobxon {{genre}} kitoblarini izlaydi",
+    "wantedBy_plural": "Yaqin atrofda {{count}} kitobxon {{genre}} kitoblarini izlaydi",
     "titleLabel": "Sarlavha",
     "authorLabel": "Muallif",
     "statusLabel": "Holat",
@@ -255,6 +255,17 @@
     "lookupFailed": "Qidiruv amalga oshmadi — ma'lumotlarni qo'lda kiriting"
   },
   "swapChat": {
+    "sys": {
+      "interested": "{{name}} kitob almashishga qiziqmoqda.",
+      "proposed": "Almashuv taklif qilindi: “{{offered}}” ⇄ “{{requested}}”",
+      "confirmed": "Almashuv tasdiqlandi! Shaharda uchrashuv kelishib oling.",
+      "declined": "{{name}} almashuvni rad etdi.",
+      "cancelled": "{{name}} almashuvni bekor qildi.",
+      "markedComplete": "{{name}} almashuvni yakunlangan deb belgiladi.",
+      "completed": "Almashuv yakunlandi! Baho qoldiring.",
+      "badgeUnlocked": "🏅 {{name}} «{{badge}}» nishonini ochdi!",
+      "photo": "📷 Rasm"
+    },
     "proposalTitle": "Almashuv taklifi",
     "decline": "Rad etish",
     "accept": "Qabul qilish",
@@ -298,15 +309,15 @@
     "languages": "Tillar",
     "readingInterests": "O'qish qiziqishlari",
     "saveWishlist": "Istaklar ro'yxatini saqlash",
-    "pickGenresHint": "Siz uchun kitoblar va o'quvchilarni ko'rish uchun yuqoridan bir nechta janr tanlang.",
+    "pickGenresHint": "Siz uchun kitoblar va kitobxonlarni ko'rish uchun yuqoridan bir nechta janr tanlang.",
     "booksForYou": "Yaqin atrofda siz uchun kitoblar ({{count}})",
     "noMatchingBooks": "Yaqin atrofda hozircha mos kitob yo'q. Yaxshi ko'rgan narsangizni o'qiydigan do'stlarni taklif qiling!",
-    "readersForYou": "Siz uchun o'quvchilar ({{count}})",
+    "readersForYou": "Siz uchun kitobxonlar ({{count}})",
     "sharesYourLanguages": "Tillaringizni baham ko'radi",
     "booksForYouShort": "Siz uchun {{count}} kitob",
     "booksForYouShort_plural": "Siz uchun {{count}} kitob",
     "exchangingNow": "· hozir almashmoqda",
-    "noMatchingReaders": "Yaqin atrofda hozircha mos o'quvchi yo'q.",
+    "noMatchingReaders": "Yaqin atrofda hozircha mos kitobxonlar yo'q.",
     "pickAtLeastOneGenre": "Kamida bitta janr tanlang",
     "wishlistUpdated": "Istaklar ro'yxati yangilandi",
     "couldNotSave": "Saqlab bo'lmadi"
@@ -328,6 +339,12 @@
     "couldNotSave": "Saqlab bo'lmadi"
   },
   "badges": {
+    "names": {
+      "first_loop": "Birinchi almashuv",
+      "regular": "Doimiy almashuvchi",
+      "bookworm": "Kitobxon",
+      "legend": "Almashuv afsonasi"
+    },
     "progress": "{{label}} ni ochish uchun yana {{count}} almashuv",
     "progress_plural": "{{label}} ni ochish uchun yana {{count}} almashuv",
     "allUnlocked": "Siz barcha nishonlarni ochdingiz — afsonaviy daraja!"

@@ -76,7 +76,6 @@ agenthub/agents/youtube/db
 # Build caches
 .cache/
 
-memory/test_credentials.md
 
 # Mobile development
 android-sdk/
@@ -86,3 +85,10 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+
+# Uploaded images (local file storage)
+backend/uploads/
+
+# Keep the documented env template tracked
+!.env.example
+!backend/.env.example

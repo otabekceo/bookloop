@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { View, Pressable, ImageBackground } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
@@ -8,6 +8,7 @@ import { GoogleLogo } from "phosphor-react-native";
 import { AppText, Button, Field, useToast, haptic } from "@/src/components/ui";
 import { Logo } from "@/src/components/Logo";
 import { useAuth } from "@/src/auth";
+import { apiFetch } from "@/src/api";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { makeStyles, useTheme } from "@/src/theme";
 import { fontsForLanguage } from "@/src/typography";
@@ -19,7 +20,7 @@ export default function Login() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { login, register, loginWithGoogle } = useAuth();
+  const { login, register, loginWithGoogle, googleError, clearGoogleError } = useAuth();
   const { t, language: uiLanguage } = useLanguage();
   const uiFonts = fontsForLanguage(uiLanguage);
   const toast = useToast();
@@ -29,6 +30,25 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Show the Google button only when the backend has a Google OAuth client configured.
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  useEffect(() => {
+    let live = true;
+    apiFetch<{ google: boolean }>("/api/auth/providers")
+      .then((p) => live && setGoogleEnabled(!!p.google))
+      .catch(() => live && setGoogleEnabled(false));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // A Google redirect that came back but couldn't be exchanged for a session.
+  useEffect(() => {
+    if (!googleError) return;
+    toast(t("auth.googleFailed"), "error");
+    clearGoogleError();
+  }, [googleError, clearGoogleError, toast, t]);
 
   const submit = async () => {
     if (!email.trim() || !password.trim() || (mode === "register" && !name.trim())) {
@@ -128,21 +148,25 @@ export default function Login() {
             style={{ marginTop: 18 }}
           />
 
-          <View style={styles.divider}>
-            <View style={styles.line} />
-            <AppText variant="caption" color={colors.muted}>
-              {t("common.or")}
-            </AppText>
-            <View style={styles.line} />
-          </View>
+          {googleEnabled && (
+            <>
+              <View style={styles.divider}>
+                <View style={styles.line} />
+                <AppText variant="caption" color={colors.muted}>
+                  {t("common.or")}
+                </AppText>
+                <View style={styles.line} />
+              </View>
 
-          <Button
-            testID="google-button"
-            title={t("auth.continueWithGoogle")}
-            variant="outline"
-            onPress={google}
-            icon={<GoogleLogo size={20} color={colors.brandPrimary} weight="bold" />}
-          />
+              <Button
+                testID="google-button"
+                title={t("auth.continueWithGoogle")}
+                variant="outline"
+                onPress={google}
+                icon={<GoogleLogo size={20} color={colors.brandPrimary} weight="bold" />}
+              />
+            </>
+          )}
 
           <Pressable
             testID="toggle-mode-button"

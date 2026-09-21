@@ -8,12 +8,15 @@ import { ArrowsClockwise, CaretRight } from "phosphor-react-native";
 import { AppText, Avatar, EmptyState, ExchangingDot, DirectionalIcon, haptic } from "@/src/components/ui";
 import { apiFetch } from "@/src/api";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
+import { renderKeyed } from "@/src/i18n/messageKeys";
 import { makeStyles, useTheme } from "@/src/theme";
 
 type SwapMeta = {
   id: string;
   status: string;
   last_message: string;
+  last_message_key?: string | null;
+  last_message_params?: Record<string, any> | null;
   other_user: { name: string; avatar_url?: string | null };
   is_requester: boolean;
 };
@@ -122,7 +125,8 @@ export default function Swaps() {
                   </View>
                 </View>
                 <AppText variant="body" color={colors.muted} numberOfLines={1}>
-                  {item.last_message || t("swaps.tapToOpen")}
+                  {renderKeyed(t, { key: item.last_message_key, params: item.last_message_params, text: item.last_message }) ||
+                    t("swaps.tapToOpen")}
                 </AppText>
               </View>
               <DirectionalIcon>

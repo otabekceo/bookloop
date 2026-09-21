@@ -3,7 +3,9 @@ import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 
-import { apiFetch, clearToken, getToken, saveToken, setMemToken } from "@/src/api";
+import { API_BASE, ApiError, apiFetch, clearToken, getToken, saveToken, setMemToken, setUnauthorizedHandler } from "@/src/api";
+import { queryClient } from "@/src/query-client";
+import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -41,41 +43,60 @@ type AuthContextType = {
   setUser: (u: User) => void;
   /** Persist the chosen UI language to the signed-in user's profile. */
   setPreferredLanguage: (code: string) => Promise<void>;
+  /** True when a Google sign-in redirect came back but the session exchange failed. */
+  googleError: boolean;
+  clearGoogleError: () => void;
 };
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
-
-const AUTH_HOST = "https://auth.emergentagent.com";
 
 function extractSessionId(url: string): string | null {
   const m = url.match(/[?#&]session_id=([^&#]+)/);
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+// Google sign-in that Google or the backend turned down comes back as `?google_error=...`.
+function hasGoogleError(url: string): boolean {
+  return /[?#&]google_error=/.test(url);
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [status, setStatus] = useState<Status>("loading");
-  const processed = useRef<Set<string>>(new Set());
+  const { language } = useLanguage();
+  const [googleError, setGoogleError] = useState(false);
+  // One in-flight exchange per session_id: a cold-start URL and a hot deep-link event can
+  // deliver the same id, and both callers must see the same outcome.
+  const inflight = useRef<Map<string, Promise<boolean>>>(new Map());
 
   const applySession = useCallback(async (token: string, u: User) => {
     await saveToken(token);
+    // Never show the previous account's cached data to the next user.
+    queryClient.clear();
     setUser(u);
     setStatus("authed");
   }, []);
 
+  /** Exchanges a Google session_id for an app session. Resolves true on success, false on failure. */
   const processSessionId = useCallback(
-    async (sid: string) => {
-      if (!sid || processed.current.has(sid)) return;
-      processed.current.add(sid);
-      try {
-        const data = await apiFetch<{ session_token: string; user: User }>("/api/auth/session", {
-          method: "POST",
-          body: { session_id: sid },
-        });
-        await applySession(data.session_token, data.user);
-      } catch (e) {
-        // leave as guest; surfaced by caller if needed
-      }
+    (sid: string): Promise<boolean> => {
+      if (!sid) return Promise.resolve(false);
+      const existing = inflight.current.get(sid);
+      if (existing) return existing;
+      const p = (async () => {
+        try {
+          const data = await apiFetch<{ session_token: string; user: User }>("/api/auth/session", {
+            method: "POST",
+            body: { session_id: sid },
+          });
+          await applySession(data.session_token, data.user);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+      inflight.current.set(sid, p);
+      return p;
     },
     [applySession],
   );
@@ -93,41 +114,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      // Web: process session_id in the URL first
+      // A Google sign-in redirect carries a session_id in the URL (web) or the launch link (native).
+      let sid: string | null = null;
+      let googleRejected = false;
       if (Platform.OS === "web" && typeof window !== "undefined") {
         const raw = window.location.hash || window.location.search;
-        const sid = raw ? extractSessionId(raw) : null;
-        if (sid) {
-          await processSessionId(sid);
+        sid = raw ? extractSessionId(raw) : null;
+        googleRejected = !!raw && hasGoogleError(raw);
+        if (googleRejected) {
           try {
             window.history.replaceState(window.history.state, "", window.location.pathname);
           } catch {}
-          return;
         }
       } else {
-        // Native: cold-start deep link
         const initial = await Linking.getInitialURL();
-        if (initial) {
-          const sid = extractSessionId(initial);
-          if (sid) {
-            await processSessionId(sid);
-            return;
-          }
-        }
+        sid = initial ? extractSessionId(initial) : null;
+        googleRejected = !!initial && hasGoogleError(initial);
       }
-      // Existing token
+      if (googleRejected && mounted) setGoogleError(true);
+      if (sid) {
+        const ok = await processSessionId(sid);
+        if (Platform.OS === "web" && typeof window !== "undefined") {
+          try {
+            window.history.replaceState(window.history.state, "", window.location.pathname);
+          } catch {}
+        }
+        if (ok) return; // applySession already set the user and the "authed" status
+        // Exchange failed: don't hang on the splash screen. Tell the login screen and fall through
+        // to an existing stored session (if any) or the guest state.
+        if (mounted) setGoogleError(true);
+      }
+
+      // Existing stored session
       const token = await getToken();
       if (token) {
         setMemToken(token);
-        try {
-          const data = await apiFetch<{ user: User }>("/api/auth/me");
-          if (mounted) {
-            setUser(data.user);
-            setStatus("authed");
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const data = await apiFetch<{ user: User }>("/api/auth/me");
+            if (mounted) {
+              setUser(data.user);
+              setStatus("authed");
+            }
+            return;
+          } catch (e) {
+            if (e instanceof ApiError && e.status === 401) {
+              // The server rejected the token: it is expired or revoked, so drop it.
+              await clearToken();
+              break;
+            }
+            // Network / server hiccup: keep the token so the next launch can retry.
+            if (attempt < 2) await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
           }
-          return;
-        } catch {
-          await clearToken();
         }
       }
       if (mounted) setStatus("guest");
@@ -142,7 +180,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (Platform.OS === "web") return;
     const sub = Linking.addEventListener("url", ({ url }) => {
       const sid = extractSessionId(url);
-      if (sid) processSessionId(sid);
+      if (sid) {
+        processSessionId(sid).then((ok) => {
+          if (!ok) setGoogleError(true);
+        });
+      } else if (hasGoogleError(url)) {
+        setGoogleError(true);
+      }
     });
     return () => sub.remove();
   }, [processSessionId]);
@@ -151,11 +195,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async (email: string, password: string, name: string) => {
       const data = await apiFetch<{ session_token: string; user: User }>("/api/auth/register", {
         method: "POST",
-        body: { email, password, name },
+        // The language picked on the first-run screen is saved with the new account.
+        body: { email, password, name, preferred_language: language },
       });
       await applySession(data.session_token, data.user);
     },
-    [applySession],
+    [applySession, language],
   );
 
   const login = useCallback(
@@ -174,7 +219,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       Platform.OS === "web" && typeof window !== "undefined"
         ? window.location.origin + "/"
         : Linking.createURL("");
-    const authUrl = `${AUTH_HOST}/?redirect=${encodeURIComponent(redirectUrl)}`;
+    // Our own backend runs the Google flow (see /api/auth/google/start in backend/server.py).
+    const authUrl = `${API_BASE}/api/auth/google/start?redirect=${encodeURIComponent(redirectUrl)}`;
     if (Platform.OS === "web") {
       window.location.href = authUrl;
       return;
@@ -191,7 +237,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!url && captured) url = captured;
       if (!url) url = await Linking.getInitialURL();
       const sid = url ? extractSessionId(url) : null;
-      if (sid) await processSessionId(sid);
+      // No sid and no error means the user closed the browser sheet: nothing to report. A rejected
+      // sign-in, or a sid that fails to exchange, is reported through googleError (shared with the
+      // deep-link listener).
+      if (url && hasGoogleError(url)) setGoogleError(true);
+      else if (sid && !(await processSessionId(sid))) setGoogleError(true);
     } finally {
       sub.remove();
     }
@@ -202,9 +252,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await apiFetch("/api/auth/logout", { method: "POST" });
     } catch {}
     await clearToken();
+    queryClient.clear();
     setUser(null);
     setStatus("guest");
   }, []);
+
+  // A 401 on a request that carried a token means the session expired or was revoked
+  // (sessions last 7 days): sign out locally so the user lands on the login screen.
+  useEffect(() => {
+    setUnauthorizedHandler(async (usedToken) => {
+      // Ignore a late 401 from an old session if a newer login has replaced the token.
+      if ((await getToken()) !== usedToken) return;
+      await clearToken();
+      queryClient.clear();
+      setUser(null);
+      setStatus((s) => (s === "loading" ? s : "guest"));
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
+  const clearGoogleError = useCallback(() => setGoogleError(false), []);
 
   const setPreferredLanguage = useCallback(async (code: string) => {
     // Optimistically reflect locally; the server is the source of truth on next refresh.
@@ -228,6 +295,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         refreshUser,
         setUser,
         setPreferredLanguage,
+        googleError,
+        clearGoogleError,
       }}
     >
       {children}

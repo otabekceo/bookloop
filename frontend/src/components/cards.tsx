@@ -5,6 +5,7 @@ import { MapPin, Sparkle, Fire } from "phosphor-react-native";
 import { AppText, Avatar, BookCover, ExchangingDot, RatingPill, StatusBadge, haptic, useDirectionalStyle } from "@/src/components/ui";
 import { Badge, BadgeIcon, topBadge } from "@/src/components/badges";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
+import { badgeLabel } from "@/src/i18n/messageKeys";
 import { bidiIsolate } from "@/src/i18n";
 import { useTheme } from "@/src/theme";
 
@@ -78,7 +79,7 @@ export function PersonCard({ person }: { person: Person }) {
               <View testID={`person-badge-${best.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: colors.brandTertiary, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 }}>
                 <BadgeIcon id={best.id} size={12} color={colors.onBrandTertiary} />
                 <AppText variant="caption" color={colors.onBrandTertiary} style={{ fontSize: 11 }}>
-                  {best.label}
+                  {badgeLabel(t, best)}
                 </AppText>
               </View>
             )}

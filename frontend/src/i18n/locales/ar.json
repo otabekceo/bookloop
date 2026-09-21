@@ -255,6 +255,17 @@
     "lookupFailed": "فشل البحث — أدخل التفاصيل يدوياً"
   },
   "swapChat": {
+    "sys": {
+      "interested": "{{name}} مهتم بمبادلة الكتب.",
+      "proposed": "تم اقتراح مبادلة: «{{offered}}» ⇄ «{{requested}}»",
+      "confirmed": "تم تأكيد المبادلة! رتّبا لقاءً محليًا.",
+      "declined": "رفض {{name}} المبادلة.",
+      "cancelled": "ألغى {{name}} المبادلة.",
+      "markedComplete": "حدّد {{name}} المبادلة كمكتملة.",
+      "completed": "اكتملت المبادلة! اترك تقييمًا.",
+      "badgeUnlocked": "🏅 حصل {{name}} على شارة «{{badge}}»!",
+      "photo": "📷 صورة"
+    },
     "proposalTitle": "اقتراح مبادلة",
     "decline": "رفض",
     "accept": "قبول",
@@ -328,6 +339,12 @@
     "couldNotSave": "تعذّر الحفظ"
   },
   "badges": {
+    "names": {
+      "first_loop": "الحلقة الأولى",
+      "regular": "منتظم في الحلقة",
+      "bookworm": "دودة كتب",
+      "legend": "أسطورة الحلقة"
+    },
     "progress": "مبادلة واحدة إضافية لفتح {{label}}",
     "progress_plural": "{{count}} مبادلات إضافية لفتح {{label}}",
     "allUnlocked": "لقد فتحت كل الشارات — أنت أسطورة!"

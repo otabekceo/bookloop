@@ -4,6 +4,7 @@ import { Medal, Fire, Books, Crown } from "phosphor-react-native";
 import { AppText } from "@/src/components/ui";
 import { makeStyles, useTheme } from "@/src/theme";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
+import { badgeLabel } from "@/src/i18n/messageKeys";
 
 export type Badge = { id: string; label: string; threshold: number; blurb: string; earned: boolean };
 
@@ -22,6 +23,7 @@ export function topBadge(badges?: Badge[]): Badge | undefined {
 export function BadgeChips({ badges }: { badges?: Badge[] }) {
   const styles = useStyles();
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const earned = (badges || []).filter((b) => b.earned);
   if (earned.length === 0) return null;
   return (
@@ -30,7 +32,7 @@ export function BadgeChips({ badges }: { badges?: Badge[] }) {
         <View key={b.id} testID={`badge-chip-${b.id}`} style={styles.chip}>
           <BadgeIcon id={b.id} size={14} color={colors.onBrandTertiary} />
           <AppText variant="caption" color={colors.onBrandTertiary}>
-            {b.label}
+            {badgeLabel(t, b)}
           </AppText>
         </View>
       ))}
@@ -53,14 +55,14 @@ export function BadgeGrid({ badges, swapsCount }: { badges: Badge[]; swapsCount:
               <BadgeIcon id={b.id} size={22} color={b.earned ? colors.onBrandPrimary : colors.muted} weight={b.earned ? "fill" : "regular"} />
             </View>
             <AppText variant="caption" color={b.earned ? colors.onSurface : colors.muted} style={{ textAlign: "center" }} numberOfLines={2}>
-              {b.label}
+              {badgeLabel(t, b)}
             </AppText>
           </View>
         ))}
       </View>
       <AppText variant="caption" color={colors.muted} testID="badge-progress">
         {next
-          ? t("badges.progress", { count: next.threshold - swapsCount, label: next.label })
+          ? t("badges.progress", { count: next.threshold - swapsCount, label: badgeLabel(t, next) })
           : t("badges.allUnlocked")}
       </AppText>
     </View>

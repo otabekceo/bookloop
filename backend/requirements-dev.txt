@@ -1,0 +1,5 @@
+# Everything needed to run the test suite: pip install -r requirements-dev.txt
+-r requirements.txt
+pytest==9.1.1
+pytest-xdist==3.8.0           # pytest.ini requires it (-n 2 --dist loadscope; use -n 0 to run serially)
+requests==2.33.1              # the tests talk to a running backend over HTTP
