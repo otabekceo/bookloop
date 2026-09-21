@@ -976,6 +976,8 @@ class TestMessageKeys:
                 assert loc["swapChat"]["sys"][k].strip(), (lang, k)
             for b in badge_ids:
                 assert loc["badges"]["names"][b].strip(), (lang, b)
+            # shown in the NEW language while switching between LTR and RTL
+            assert loc["languageSelect"]["switching"].strip(), (lang, "languageSelect.switching")
             sets[lang] = set(leaves(loc))
         assert all(s == sets["en"] for s in sets.values()), {
             l: sorted(sets["en"] ^ s)[:5] for l, s in sets.items() if s != sets["en"]}

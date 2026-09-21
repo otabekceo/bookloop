@@ -21,17 +21,19 @@ export default function LanguageSelect() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { language, setLanguage, t } = useLanguage();
+  const { language, setLanguage, isSwitching, t } = useLanguage();
 
   // Local draft so tapping a card previews the choice before confirming.
   const [selected, setSelected] = useState<LanguageCode>(language);
 
   const choose = (code: LanguageCode) => {
+    if (isSwitching) return;
     haptic("selection");
     setSelected(code);
   };
 
   const confirm = async () => {
+    if (isSwitching) return;
     haptic("success");
     await setLanguage(selected);
   };
@@ -66,7 +68,8 @@ export default function LanguageSelect() {
                 key={lang.code}
                 testID={`language-${lang.code}`}
                 accessibilityRole="button"
-                accessibilityState={{ selected: active }}
+                accessibilityState={{ selected: active, disabled: isSwitching }}
+                disabled={isSwitching}
                 onPress={() => choose(lang.code)}
                 style={[styles.card, active && styles.cardActive]}
               >
@@ -90,6 +93,7 @@ export default function LanguageSelect() {
         <Button
           title={t("languageSelect.continue")}
           onPress={confirm}
+          disabled={isSwitching}
           testID="language-continue"
           style={styles.cta}
         />

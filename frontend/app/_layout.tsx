@@ -14,6 +14,7 @@ import { ErrorBoundary } from "@/src/components/error-boundary";
 import { queryClient } from "@/src/query-client";
 import { AuthProvider, useAuth } from "@/src/auth";
 import { ToastProvider } from "@/src/components/ui";
+import { LanguageSwitchOverlay } from "@/src/components/LanguageSwitchOverlay";
 import { fontAssets } from "@/src/typography";
 import { useTheme } from "@/src/theme";
 import { LanguageProvider, useLanguage } from "@/src/i18n/LanguageProvider";
@@ -53,6 +54,17 @@ function LanguageSync() {
   }, [user, isReady, needsSelection, language, setPreferredLanguage]);
 
   return null;
+}
+
+/**
+ * Applies the layout direction of the CURRENT language to the whole app as an explicit `direction`, so the
+ * layout follows the language even when the native direction has not caught up yet (e.g. right after a
+ * switch, or in a build that cannot reload). Everything below, bottom sheets and toasts included,
+ * inherits it. The bottom tab bar deliberately overrides it with `ltr` (see app/(tabs)/_layout.tsx).
+ */
+function DirectionRoot({ children }: { children: React.ReactNode }) {
+  const { isRTL } = useLanguage();
+  return <View style={{ flex: 1, direction: isRTL ? "rtl" : "ltr" }}>{children}</View>;
 }
 
 function RootNavigator() {
@@ -123,14 +135,17 @@ export default function RootLayout() {
           <ErrorBoundary>
             <QueryClientProvider client={queryClient}>
               <LanguageProvider>
-                <AuthProvider>
-                  <BottomSheetModalProvider>
-                    <ToastProvider>
-                      <LanguageSync />
-                      <RootNavigator />
-                    </ToastProvider>
-                  </BottomSheetModalProvider>
-                </AuthProvider>
+                <DirectionRoot>
+                  <AuthProvider>
+                    <BottomSheetModalProvider>
+                      <ToastProvider>
+                        <LanguageSync />
+                        <RootNavigator />
+                        <LanguageSwitchOverlay />
+                      </ToastProvider>
+                    </BottomSheetModalProvider>
+                  </AuthProvider>
+                </DirectionRoot>
               </LanguageProvider>
             </QueryClientProvider>
           </ErrorBoundary>

@@ -68,6 +68,7 @@
     "genresInCommon_plural": "{{count}} umumiy janr"
   },
   "languageSelect": {
+    "switching": "Til o'zgartirilmoqda…",
     "title": "Iltimos, tilni tanlang",
     "subtitle": "BookLoop'dan foydalanmoqchi bo'lgan tilni tanlang. Keyinchalik Sozlamalarda o'zgartirishingiz mumkin.",
     "continue": "Davom etish",

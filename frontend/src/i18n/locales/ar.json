@@ -68,6 +68,7 @@
     "genresInCommon_plural": "{{count}} تصنيفات مشتركة"
   },
   "languageSelect": {
+    "switching": "جارٍ تغيير اللغة…",
     "title": "الرجاء اختيار اللغة",
     "subtitle": "اختر اللغة التي تريد استخدام BookLoop بها. يمكنك تغييرها لاحقاً من الإعدادات.",
     "continue": "متابعة",

@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { I18nManager, Platform } from "react-native";
+import { Platform } from "react-native";
 import { useTranslation } from "react-i18next";
 
 import i18n, {
@@ -15,6 +15,8 @@ import i18n, {
   loadStoredLanguage,
   persistLanguage,
 } from "./index";
+import { syncNativeDirection, waitForOverlayPaint } from "./direction";
+import { createLanguageSwitcher } from "./languageSwitch";
 import {
   getLanguageMeta,
   isLanguageCode,
@@ -31,6 +33,8 @@ type LanguageContextType = {
   isReady: boolean;
   /** True when the user has never explicitly chosen a language. */
   needsSelection: boolean;
+  /** True while switching between LTR and RTL: the "switching language" overlay is up and a reload is coming. */
+  isSwitching: boolean;
   /** Change the app language. Persists locally and (when authed) server-side. */
   setLanguage: (code: LanguageCode) => Promise<void>;
   /**
@@ -45,27 +49,16 @@ type LanguageContextType = {
 
 const LanguageContext = createContext<LanguageContextType | null>(null);
 
-/**
- * Applies the RTL/LTR layout direction for a language.
- *
- * React Native only reads `I18nManager.isRTL` at startup, so a direction change
- * requires an app reload to take full effect. We still flip the flag so that
- * the next launch renders correctly, and expose `isRTL` so components can
- * mirror individual styles immediately.
- */
-function applyLayoutDirection(code: LanguageCode) {
-  const shouldBeRTL = isRTLLanguage(code);
-  I18nManager.allowRTL(true);
-  if (I18nManager.isRTL !== shouldBeRTL) {
-    I18nManager.forceRTL(shouldBeRTL);
-  }
-}
+// Direction handling lives in ./direction.ts: it always stores the wanted direction natively and reloads the
+// app only when the direction actually changes (LTR <-> RTL). `isRTL` below is derived from the CURRENT
+// language, and the root layout applies it as an explicit `direction` (see app/_layout.tsx).
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
   const [language, setLanguageState] = useState<LanguageCode>(DEFAULT_LANGUAGE);
   const [isReady, setIsReady] = useState(false);
   const [needsSelection, setNeedsSelection] = useState(false);
+  const [isSwitching, setIsSwitching] = useState(false);
   // Guards against writing the language back to the server before the user
   // has actually made a choice.
   const userChoseRef = useRef(false);
@@ -79,7 +72,9 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       if (stored) {
         setLanguageState(stored);
         await i18n.changeLanguage(stored);
-        applyLayoutDirection(stored);
+        // Make the native layout direction match the saved language on every start. This also repairs a
+        // device left in the wrong direction; if a reload was triggered, wait for it instead of rendering.
+        if ((await syncNativeDirection(isRTLLanguage(stored))) === "reloading") return;
         setNeedsSelection(false);
       } else {
         // Brand-new user: keep the default rendering language but flag that we
@@ -93,13 +88,29 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // The switching flow (save first -> apply -> overlay + reload only if LTR <-> RTL changes -> ignore
+  // repeated taps) lives in ./languageSwitch.ts; this wires in the real storage, i18n, state and reload.
+  const switcherRef = useRef<ReturnType<typeof createLanguageSwitcher> | null>(null);
+  if (!switcherRef.current) {
+    switcherRef.current = createLanguageSwitcher({
+      persist: (code) => persistLanguage(code as LanguageCode),
+      applyLanguage: async (code) => {
+        await i18n.changeLanguage(code);
+        setLanguageState(code as LanguageCode);
+        setNeedsSelection(false);
+      },
+      syncDirection: (code, beforeReload) => syncNativeDirection(isRTLLanguage(code), beforeReload),
+      setSwitching: setIsSwitching,
+      waitForPaint: waitForOverlayPaint,
+      schedule: (fn, ms) => {
+        setTimeout(fn, ms);
+      },
+    });
+  }
+
   const setLanguage = useCallback(async (code: LanguageCode) => {
     userChoseRef.current = true;
-    setLanguageState(code);
-    setNeedsSelection(false);
-    await i18n.changeLanguage(code);
-    applyLayoutDirection(code);
-    await persistLanguage(code);
+    await switcherRef.current!(code);
   }, []);
 
   const syncFromServer = useCallback(
@@ -113,16 +124,16 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       setLanguageState(next);
       setNeedsSelection(false);
       await i18n.changeLanguage(next);
-      applyLayoutDirection(next);
       await persistLanguage(next);
+      await syncNativeDirection(isRTLLanguage(next));
     },
     [],
   );
 
-  // Web only: `I18nManager.forceRTL` is a no-op in the browser, so mirror the
+  // Web only: the browser has no native layout direction to force, so mirror the
   // document itself. Setting `dir`/`lang` on <html> lets the browser's bidi
   // algorithm lay out mixed Arabic + Latin text correctly and flips native
-  // scrollbars/overflow. Native platforms rely on I18nManager instead.
+  // scrollbars/overflow. Native platforms are handled in ./direction.ts.
   useEffect(() => {
     if (Platform.OS !== "web" || typeof document === "undefined") return;
     const el = document.documentElement;
@@ -136,11 +147,12 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       isRTL: isRTLLanguage(language),
       isReady,
       needsSelection,
+      isSwitching,
       setLanguage,
       syncFromServer,
       t,
     }),
-    [language, isReady, needsSelection, setLanguage, syncFromServer, t],
+    [language, isReady, needsSelection, isSwitching, setLanguage, syncFromServer, t],
   );
 
   return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;

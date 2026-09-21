@@ -68,6 +68,7 @@
     "genresInCommon_plural": "{{count}} generi in comune"
   },
   "languageSelect": {
+    "switching": "Cambio della lingua…",
     "title": "Seleziona la tua lingua",
     "subtitle": "Scegli la lingua con cui vuoi usare BookLoop. Potrai cambiarla in seguito nelle Impostazioni.",
     "continue": "Continua",

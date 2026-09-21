@@ -53,10 +53,10 @@ export function DirectionalIcon({ children, mirror = true }: { children: React.R
  * Returns a style object that swaps physical `left`/`right` (and their margin
  * and padding variants) for the correct side under the active direction.
  *
- * React Native's `I18nManager` only mirrors `start`/`end` logical properties,
- * not the physical `left`/`right` used by absolutely-positioned overlays such
- * as notification badges and camera buttons. Pass the LTR style and this hook
- * mirrors the horizontal anchors when the language is RTL.
+ * `left`/`right` always mean the physical sides in BookLoop (src/i18n/direction.ts turns off React
+ * Native's automatic left/right swap), while `start`/`end` and rows follow the direction. Pass the LTR
+ * style and this hook mirrors the horizontal anchors of absolutely-positioned overlays such as
+ * notification badges and camera buttons when the language is RTL.
  *
  * Example: `useDirectionalStyle({ right: -8 })` → `{ left: -8 }` under Arabic.
  */

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { View, Pressable, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,19 +22,31 @@ export default function LanguageSettings() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { language, setLanguage, t } = useLanguage();
+  const { language, setLanguage, isSwitching, t } = useLanguage();
   const { setPreferredLanguage } = useAuth();
 
+  // True from the tap until the switch finished: covers the server sync below, so a second tap during a
+  // slow request can't start another switch.
+  const [busy, setBusy] = useState(false);
+  const locked = busy || isSwitching;
+
   const choose = async (code: LanguageCode) => {
+    if (locked) return;
     if (code === language) {
       router.back();
       return;
     }
+    setBusy(true);
     haptic("selection");
-    await setLanguage(code);
-    // Best-effort server sync; local persistence already succeeded.
-    await setPreferredLanguage(code);
-    router.back();
+    try {
+      // Best-effort server sync FIRST: switching between LTR and RTL reloads the app, which would
+      // otherwise cut this request off. (It also self-heals on the next start if it fails.)
+      await setPreferredLanguage(code);
+      await setLanguage(code);
+      router.back();
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -66,7 +79,8 @@ export default function LanguageSettings() {
                 key={lang.code}
                 testID={`language-option-${lang.code}`}
                 accessibilityRole="button"
-                accessibilityState={{ selected: active }}
+                accessibilityState={{ selected: active, disabled: locked }}
+                disabled={locked}
                 onPress={() => choose(lang.code)}
                 style={[styles.row, active && styles.rowActive]}
               >
