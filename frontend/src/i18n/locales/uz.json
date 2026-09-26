@@ -68,7 +68,6 @@
     "genresInCommon_plural": "{{count}} umumiy janr"
   },
   "languageSelect": {
-    "switching": "Til o'zgartirilmoqda…",
     "title": "Iltimos, tilni tanlang",
     "subtitle": "BookLoop'dan foydalanmoqchi bo'lgan tilni tanlang. Keyinchalik Sozlamalarda o'zgartirishingiz mumkin.",
     "continue": "Davom etish",
@@ -103,7 +102,7 @@
     "profile": "Profil"
   },
   "discover": {
-    "title": "Atrofingizdagi\no'quvchilarni toping.",
+    "title": "Atrofingizdagi\nkitobxonlarni toping.",
     "searchPlaceholder": "Odamlar, kitoblar yoki mualliflarni qidirish",
     "people": "Odamlar",
     "books": "Kitoblar",
@@ -112,7 +111,7 @@
     "allReadersNearby": "Yaqin atrofdagi barcha o'quvchilar",
     "seeBestMatches": "Eng yaxshi mosliklaringizni ko'ring",
     "setupMatches": "O'zingiz yaxshi ko'rgan janrlarni qo'shing — biz ularni baham ko'radigan o'quvchilarni topamiz.",
-    "noReadersTitle": "O'quvchilar topilmadi",
+    "noReadersTitle": "kitobxonlarni topilmadi",
     "noReadersBody": "Masofani kengaytirib ko'ring yoki filtrlarni tozalang.",
     "noBooksTitle": "Kitoblar topilmadi",
     "noBooksBody": "Boshqa qidiruv yoki janrni sinab ko'ring.",

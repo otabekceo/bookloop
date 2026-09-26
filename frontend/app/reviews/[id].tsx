@@ -46,7 +46,7 @@ export default function Reviews() {
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
             <View style={styles.summary}>
-              <Star size={26} color={colors.star} weight="fill" />
+              <Star size={26} color={colors.rating} weight="fill" />
               <AppText variant="display">{data.user.rating > 0 ? data.user.rating.toFixed(1) : t("reviews.new")}</AppText>
               <AppText variant="body" color={colors.muted}>
                 {t("reviews.summary", {

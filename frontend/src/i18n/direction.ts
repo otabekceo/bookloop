@@ -32,9 +32,15 @@ if (Platform.OS !== "web") {
 
 /** Store the wanted direction natively (applies at the next start/reload). Idempotent; always safe to call. */
 function applyNativeDirection(rtl: boolean) {
-  // allowRTL(false) also stops a right-to-left DEVICE language from forcing RTL onto an LTR app language.
-  I18nManager.allowRTL(rtl);
-  I18nManager.forceRTL(rtl);
+  try {
+    // allowRTL(false) also stops a right-to-left DEVICE language from forcing RTL onto an LTR app language.
+    I18nManager.allowRTL(rtl);
+    I18nManager.forceRTL(rtl);
+  } catch (e) {
+    // Seen to throw on some physical-device/Expo Go native-module setups. Non-fatal: the rest of direction
+    // sync (and app boot) must continue even if the native preference couldn't be written this run.
+    console.error("[direction] applyNativeDirection threw:", e);
+  }
 }
 
 // Reloads the JS bundle in development / Expo Go. Release builds need `expo-updates`
@@ -64,17 +70,42 @@ export function waitForOverlayPaint(): Promise<void> {
 }
 
 /**
+ * Upper bound on how long app BOOT waits for a reload it just triggered to actually land (tear down and
+ * replace the current JS context) before giving up and rendering in this context anyway. A real reload lands
+ * well under this on both platforms; this exists only as a fail-safe for a reload signal that is dropped
+ * (observed on some physical-device/Expo Go setups) so startup can never hang forever on it. Deliberately
+ * short: this is a silent fallback, not a loading experience to budget for.
+ */
+const BOOT_RELOAD_FALLBACK_MS = 1500;
+
+export function waitForBootReloadFallback(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, BOOT_RELOAD_FALLBACK_MS));
+}
+
+/**
  * Make the native layout direction match the language.
  *  - "in-sync":   nothing to do (same direction, e.g. English -> Italian).
  *  - "reloading": direction changed and a reload was triggered; the caller should stop.
- *  - "pending":   direction differs but a reload is not possible or was already tried; the visible layout
- *                 is still kept correct by the root `direction` style, and the native setting applies on
- *                 the next app start.
+ *  - "pending":   direction differs but a reload is not possible, not allowed, or was already tried; the
+ *                 visible layout is still kept correct by the root `direction` style, and the native setting
+ *                 applies on the next app start.
+ *
+ * @param allowReload  Whether this call may trigger `DevSettings.reload()` at all. Defaults to `true` for the
+ *                      in-app language switch, which is what actually needs the reload to take effect and
+ *                      runs once the app (and its connection to the Metro dev server) is already up. App BOOT
+ *                      passes `false`: on some physical-device/Expo Go setups, reloading this early — right
+ *                      after cold launch, before the dev-server connection is fully warmed up — makes Expo Go
+ *                      try to re-download the JS bundle and can fail with a FATAL native error
+ *                      ("Failed to download remote update"), outside anything JS can catch or recover from.
+ *                      Skipping the boot-time reload avoids that entirely; the native preference is still
+ *                      written above so the direction is correct on the next real (non-reload) app start, and
+ *                      the visible layout is already correct via the root `direction` style in the meantime.
  */
 export async function syncNativeDirection(
   rtl: boolean,
   /** Awaited right before the reload, and only when a reload will actually happen (used to show the overlay). */
   beforeReload?: () => Promise<void>,
+  allowReload = true,
 ): Promise<DirectionResult> {
   if (Platform.OS === "web") return "in-sync"; // the browser handles direction via <html dir>
   applyNativeDirection(rtl);
@@ -82,14 +113,26 @@ export async function syncNativeDirection(
   const stored = await storage.getItem<string | null>(MARKER_KEY, null);
   const marker: Dir | null = stored === "rtl" || stored === "ltr" ? stored : null;
   const plan = planDirection(rtl, I18nManager.isRTL, marker);
+  console.log(
+    `[direction] wantRTL=${rtl} nativeRTL=${I18nManager.isRTL} marker=${marker} allowReload=${allowReload} -> action=${plan.action} nextMarker=${plan.marker}`,
+  );
 
   if (plan.marker) await storage.setItem(MARKER_KEY, plan.marker);
   else if (marker) await storage.removeItem(MARKER_KEY);
 
   if (plan.action === "reload") {
-    if (!canReload()) return "pending"; // nothing to show an overlay for: no reload will happen
+    if (!allowReload) {
+      console.log("[direction] reload wanted but disallowed by caller (boot) -> pending");
+      return "pending";
+    }
+    if (!canReload()) {
+      console.log("[direction] reload wanted but canReload() is false -> pending"); // e.g. release build
+      return "pending";
+    }
     if (beforeReload) await beforeReload();
-    return reloadApp() ? "reloading" : "pending";
+    const started = reloadApp();
+    console.log(`[direction] reloadApp() returned ${started}`);
+    return started ? "reloading" : "pending";
   }
   return plan.action === "none" ? "in-sync" : "pending";
 }

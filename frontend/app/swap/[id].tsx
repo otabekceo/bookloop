@@ -359,7 +359,7 @@ export default function SwapChat() {
           <View style={{ flexDirection: "row", justifyContent: "center", gap: 8 }}>
             {[1, 2, 3, 4, 5].map((n) => (
               <Pressable key={n} testID={`star-${n}`} onPress={() => { haptic("selection"); setStars(n); }}>
-                <Star size={40} color={colors.star} weight={n <= stars ? "fill" : "regular"} />
+                <Star size={40} color={colors.rating} weight={n <= stars ? "fill" : "regular"} />
               </Pressable>
             ))}
           </View>

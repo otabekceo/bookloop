@@ -286,7 +286,7 @@ const useStyles = makeStyles((colors) => ({
   header: { paddingHorizontal: 20, backgroundColor: colors.surface },
   topRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   bell: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
-  bellDot: { position: "absolute", top: 10, right: 12, width: 9, height: 9, borderRadius: 5, backgroundColor: colors.brandPrimary },
+  bellDot: { position: "absolute", top: 10, right: 12, width: 9, height: 9, borderRadius: 5, backgroundColor: colors.notification },
   searchRow: { flexDirection: "row", gap: 10, alignItems: "center" },
   searchPill: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.surfaceSecondary, borderRadius: 14, borderWidth: 1, borderColor: colors.border, paddingLeft: 14 },
   searchInput: { flex: 1, borderWidth: 0, backgroundColor: "transparent", paddingLeft: 0, paddingVertical: 12 },

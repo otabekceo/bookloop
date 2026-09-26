@@ -1,10 +1,30 @@
-"""BookLoop end-to-end API tests. Covers auth, discover, map, books, swaps, notifications, uploads."""
+"""BookLoop end-to-end API tests. Covers auth, discover, map, books, swaps, notifications, uploads.
+
+IMPORTANT: the backend under test MUST be started with OTP_DEBUG_MODE=true. Most fixtures/tests need
+a fast, no-email way to get a working account, via /api/auth/register/dev-instant — a route that only
+exists (mirrors the old instant /auth/register contract) when that flag is set; without it these all
+404. The dedicated TestRegistrationOtp class below exercises the REAL email/OTP/password flow and
+also needs it, to read back the OTP via the `debug_otp` field instead of a real inbox. e.g.:
+
+    OTP_DEBUG_MODE=true python -m uvicorn server:app --host 127.0.0.1 --port 8001   (bash)
+    $env:OTP_DEBUG_MODE='true'; python -m uvicorn server:app --port 8001            (PowerShell)
+
+Never run a backend with this flag reachable from the internet — see backend/.env.example.
+"""
 import os
 import io
 import time
 import uuid
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
 import pytest
 import requests
+from dotenv import load_dotenv
+from pymongo import MongoClient
+
+# Loads the same backend/.env the server itself reads, so TestRegistrationOtp's direct-to-Mongo
+# helpers (below) talk to the same database as whatever backend EXPO_PUBLIC_BACKEND_URL points at.
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 # The tests create users, books and swaps: run them against a local backend on a throwaway database.
 # Use 127.0.0.1 rather than "localhost" (on Windows "localhost" adds ~2 s to every request).
@@ -22,7 +42,7 @@ def user_a():
     """Primary test user: reuse existing test@bookloop.com or create if missing."""
     r = requests.post(f"{API}/auth/login", json={"email": "test@bookloop.com", "password": "test1234"})
     if r.status_code != 200:
-        r = requests.post(f"{API}/auth/register", json={"email": "test@bookloop.com", "password": "test1234", "name": "Test User A"})
+        r = requests.post(f"{API}/auth/register/dev-instant", json={"email": "test@bookloop.com", "password": "test1234", "name": "Test User A"})
     assert r.status_code == 200, r.text
     d = r.json()
     return {"token": d["session_token"], "user": d["user"]}
@@ -31,7 +51,7 @@ def user_a():
 @pytest.fixture(scope="module")
 def user_b():
     email = f"TEST_{uuid.uuid4().hex[:8]}@bookloop.com"
-    r = requests.post(f"{API}/auth/register", json={"email": email, "password": "test1234", "name": "Test User B"})
+    r = requests.post(f"{API}/auth/register/dev-instant", json={"email": email, "password": "test1234", "name": "Test User B"})
     assert r.status_code == 200, r.text
     d = r.json()
     return {"token": d["session_token"], "user": d["user"], "email": email}
@@ -71,7 +91,7 @@ class TestAuth:
         assert r.status_code == 401, r.text
 
     def test_register_duplicate(self):
-        r = requests.post(f"{API}/auth/register", json={"email": "test@bookloop.com", "password": "x", "name": "Y"})
+        r = requests.post(f"{API}/auth/register/dev-instant", json={"email": "test@bookloop.com", "password": "x", "name": "Y"})
         assert r.status_code == 400
 
     def test_logout(self, user_b):
@@ -392,7 +412,7 @@ class TestUserReviews:
     def test_reviews_shape(self, user_a):
         """Self-contained: create user_c, run a mini swap A<->C, complete + rate C, verify /users/{c} returns reviews."""
         email = f"TEST_rev_{uuid.uuid4().hex[:8]}@bookloop.com"
-        rc = requests.post(f"{API}/auth/register", json={"email": email, "password": "test1234", "name": "TEST Reviewee"})
+        rc = requests.post(f"{API}/auth/register/dev-instant", json={"email": email, "password": "test1234", "name": "TEST Reviewee"})
         assert rc.status_code == 200
         uc = rc.json()
         tc, ucid = uc["session_token"], uc["user"]["user_id"]
@@ -437,7 +457,7 @@ class TestNotifications:
 # and of the shared TestSwapFlow state.
 def _new_user(label):
     email = f"TEST_{uuid.uuid4().hex[:10]}@bookloop.com"
-    r = requests.post(f"{API}/auth/register", json={"email": email, "password": "test1234", "name": f"Guard {label}"})
+    r = requests.post(f"{API}/auth/register/dev-instant", json={"email": email, "password": "test1234", "name": f"Guard {label}"})
     assert r.status_code == 200, r.text
     d = r.json()
     return {"token": d["session_token"], "id": d["user"]["user_id"]}
@@ -985,13 +1005,13 @@ class TestMessageKeys:
 
 class TestPasswordLimits:
     def _register(self, password):
-        return requests.post(f"{API}/auth/register",
+        return requests.post(f"{API}/auth/register/dev-instant",
                              json={"email": f"TEST_{uuid.uuid4().hex[:10]}@bookloop.com", "password": password, "name": "Pw"})
 
     def test_72_byte_password_works_and_logs_in(self):
         pw = "p" * 72
         email = f"TEST_{uuid.uuid4().hex[:10]}@bookloop.com"
-        assert requests.post(f"{API}/auth/register", json={"email": email, "password": pw, "name": "Pw"}).status_code == 200
+        assert requests.post(f"{API}/auth/register/dev-instant", json={"email": email, "password": pw, "name": "Pw"}).status_code == 200
         assert requests.post(f"{API}/auth/login", json={"email": email, "password": pw}).status_code == 200
 
     def test_over_72_bytes_is_a_clean_400_not_a_500(self):
@@ -1017,7 +1037,7 @@ class TestPreferredLanguage:
 
     def test_register_persists_chosen_language(self):
         email = f"TEST_{uuid.uuid4().hex[:10]}@bookloop.com"
-        r = requests.post(f"{API}/auth/register",
+        r = requests.post(f"{API}/auth/register/dev-instant",
                           json={"email": email, "password": "test1234", "name": "Lang", "preferred_language": "it"})
         assert r.status_code == 200 and r.json()["user"]["preferred_language"] == "it"
         login = requests.post(f"{API}/auth/login", json={"email": email, "password": "test1234"})
@@ -1025,14 +1045,220 @@ class TestPreferredLanguage:
 
     def test_register_ignores_unknown_language(self):
         email = f"TEST_{uuid.uuid4().hex[:10]}@bookloop.com"
-        r = requests.post(f"{API}/auth/register",
+        r = requests.post(f"{API}/auth/register/dev-instant",
                           json={"email": email, "password": "test1234", "name": "Lang", "preferred_language": "xx"})
         assert r.status_code == 200 and r.json()["user"]["preferred_language"] is None
 
     def test_register_without_language_still_works(self):
         email = f"TEST_{uuid.uuid4().hex[:10]}@bookloop.com"
-        r = requests.post(f"{API}/auth/register", json={"email": email, "password": "test1234", "name": "Lang"})
+        r = requests.post(f"{API}/auth/register/dev-instant", json={"email": email, "password": "test1234", "name": "Lang"})
         assert r.status_code == 200 and r.json()["user"]["preferred_language"] is None
+
+
+# ------------------------------------------------------------------ REGISTRATION OTP
+def _otp_db():
+    """The one place in this file that talks to Mongo directly rather than only through the HTTP
+    API — used to time-travel OTP/cooldown timestamps instead of sleeping for real minutes."""
+    return MongoClient(os.environ.get("MONGO_URL") or "mongodb://localhost:27017")[os.environ.get("DB_NAME") or "bookloop_test"]
+
+
+class TestRegistrationOtp:
+    """The real email/OTP/password registration flow, end to end against a live backend, including a
+    REAL send through Resend on every request-otp/resend-otp call (this class reads the code back via
+    `debug_otp`, only present when OTP_DEBUG_MODE=true — see module docstring — but that's purely a
+    read-back shortcut, not a bypass of sending). Addresses use Resend's `delivered@resend.dev` test
+    domain with unique "+" sub-addresses: without a verified sending domain, Resend's API rejects
+    arbitrary "to" addresses (e.g. plain @bookloop.com ones), but always simulates a successful
+    delivery to any address under resend.dev — see backend/.env.example."""
+
+    def _email(self):
+        return f"delivered+otp_{uuid.uuid4().hex[:10]}@resend.dev"
+
+    def _request_otp(self, email, name="Otp Test"):
+        # This class sends a REAL email through Resend on every call. A 502 here means the backend's
+        # own EmailSendError path (Resend rejected/errored the send) — never a backend logic bug, so
+        # one retry absorbs an occasional transient rate-limit from firing ~20 real sends in a row
+        # without masking a real failure (a second consecutive 502 still fails the test loudly).
+        for attempt in range(2):
+            r = requests.post(f"{API}/auth/register/request-otp", json={"name": name, "email": email, "preferred_language": "en"})
+            if r.status_code == 200 or attempt == 1:
+                break
+            time.sleep(2)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert "debug_otp" in d, "backend must be started with OTP_DEBUG_MODE=true to run these tests"
+        return d["debug_otp"]
+
+    def _verified_token(self, email):
+        code = self._request_otp(email)
+        r = requests.post(f"{API}/auth/register/verify-otp", json={"email": email, "code": code})
+        assert r.status_code == 200, r.text
+        return r.json()["verification_token"]
+
+    # --- OTP correctness -----------------------------------------------------------------------
+    def test_valid_otp_verifies(self):
+        email = self._email()
+        code = self._request_otp(email)
+        r = requests.post(f"{API}/auth/register/verify-otp", json={"email": email, "code": code})
+        assert r.status_code == 200, r.text
+        assert r.json()["verification_token"]
+
+    def test_incorrect_otp_rejected(self):
+        email = self._email()
+        self._request_otp(email)
+        r = requests.post(f"{API}/auth/register/verify-otp", json={"email": email, "code": "000000"})
+        assert r.status_code == 400
+        assert r.json()["detail"]["code"] == "invalid_otp"
+
+    def test_expired_otp_rejected(self):
+        email = self._email()
+        code = self._request_otp(email)
+        _otp_db().pending_registrations.update_one(
+            {"email": email.lower()}, {"$set": {"otp_expires_at": datetime.now(timezone.utc) - timedelta(minutes=1)}}
+        )
+        r = requests.post(f"{API}/auth/register/verify-otp", json={"email": email, "code": code})
+        assert r.status_code == 400
+        assert r.json()["detail"]["code"] == "otp_expired"
+
+    def test_otp_cannot_be_reused(self):
+        email = self._email()
+        code = self._request_otp(email)
+        first = requests.post(f"{API}/auth/register/verify-otp", json={"email": email, "code": code})
+        assert first.status_code == 200
+        second = requests.post(f"{API}/auth/register/verify-otp", json={"email": email, "code": code})
+        assert second.status_code == 400
+        assert second.json()["detail"]["code"] == "otp_expired"  # the OTP hash was cleared on first use
+
+    # --- resend + rate limiting -----------------------------------------------------------------
+    def test_resend_invalidates_previous_otp(self):
+        email = self._email()
+        old_code = self._request_otp(email)
+        # Bypass the resend cooldown by time-travelling last_otp_sent_at — the cooldown itself is
+        # covered separately by test_resend_rate_limited below.
+        _otp_db().pending_registrations.update_one(
+            {"email": email.lower()}, {"$set": {"last_otp_sent_at": datetime.now(timezone.utc) - timedelta(seconds=61)}}
+        )
+        r = requests.post(f"{API}/auth/register/resend-otp", json={"email": email})
+        assert r.status_code == 200, r.text
+        new_code = r.json()["debug_otp"]
+        assert new_code != old_code
+        assert requests.post(f"{API}/auth/register/verify-otp", json={"email": email, "code": old_code}).status_code == 400
+        assert requests.post(f"{API}/auth/register/verify-otp", json={"email": email, "code": new_code}).status_code == 200
+
+    def test_resend_rate_limited(self):
+        email = self._email()
+        self._request_otp(email)
+        r = requests.post(f"{API}/auth/register/resend-otp", json={"email": email})
+        assert r.status_code == 429
+        assert r.json()["detail"]["code"] == "rate_limited"
+
+    def test_too_many_incorrect_attempts_locks_out(self):
+        email = self._email()
+        self._request_otp(email)
+        for _ in range(5):  # OTP_MAX_ATTEMPTS in server.py
+            r = requests.post(f"{API}/auth/register/verify-otp", json={"email": email, "code": "000000"})
+            assert r.status_code == 400
+            assert r.json()["detail"]["code"] == "invalid_otp"
+        r = requests.post(f"{API}/auth/register/verify-otp", json={"email": email, "code": "000000"})
+        assert r.status_code == 429
+        assert r.json()["detail"]["code"] == "too_many_attempts"
+
+    # --- can't skip verification ----------------------------------------------------------------
+    def test_complete_without_verification_rejected(self):
+        email = self._email()
+        r = requests.post(
+            f"{API}/auth/register/complete",
+            json={"email": email, "password": "Str0ng!Pass", "verification_token": "not-a-real-token"},
+        )
+        assert r.status_code == 401
+        assert r.json()["detail"]["code"] == "verification_expired"
+
+    # --- password policy (server-side; the frontend's checklist is UX only) --------------------
+    def test_weak_password_rejected(self):
+        email = self._email()
+        token = self._verified_token(email)
+        r = requests.post(f"{API}/auth/register/complete", json={"email": email, "password": "weak", "verification_token": token})
+        assert r.status_code == 400
+        assert r.json()["detail"]["code"] == "weak_password"
+
+    def test_password_without_uppercase_rejected(self):
+        email = self._email()
+        token = self._verified_token(email)
+        r = requests.post(f"{API}/auth/register/complete", json={"email": email, "password": "lowercase1!", "verification_token": token})
+        assert r.status_code == 400
+        assert "no_upper" in r.json()["detail"]["violations"]
+
+    def test_password_without_lowercase_rejected(self):
+        email = self._email()
+        token = self._verified_token(email)
+        r = requests.post(f"{API}/auth/register/complete", json={"email": email, "password": "UPPERCASE1!", "verification_token": token})
+        assert r.status_code == 400
+        assert "no_lower" in r.json()["detail"]["violations"]
+
+    def test_password_without_number_rejected(self):
+        email = self._email()
+        token = self._verified_token(email)
+        r = requests.post(f"{API}/auth/register/complete", json={"email": email, "password": "NoNumber!!", "verification_token": token})
+        assert r.status_code == 400
+        assert "no_number" in r.json()["detail"]["violations"]
+
+    def test_password_without_special_char_rejected(self):
+        email = self._email()
+        token = self._verified_token(email)
+        r = requests.post(f"{API}/auth/register/complete", json={"email": email, "password": "NoSpecial123", "verification_token": token})
+        assert r.status_code == 400
+        assert "no_special" in r.json()["detail"]["violations"]
+
+    def test_password_under_8_chars_rejected(self):
+        email = self._email()
+        token = self._verified_token(email)
+        r = requests.post(f"{API}/auth/register/complete", json={"email": email, "password": "Sh0rt!", "verification_token": token})
+        assert r.status_code == 400
+        assert "too_short" in r.json()["detail"]["violations"]
+
+    def test_valid_password_accepted_and_completes_registration(self):
+        email = self._email()
+        token = self._verified_token(email)
+        r = requests.post(f"{API}/auth/register/complete", json={"email": email, "password": "Str0ng!Pass", "verification_token": token})
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["session_token"]
+        assert d["user"]["email"] == email.lower()
+
+    # --- duplicates + onboarding state ----------------------------------------------------------
+    def test_duplicate_account_prevented(self):
+        email = self._email()
+        token = self._verified_token(email)
+        r1 = requests.post(f"{API}/auth/register/complete", json={"email": email, "password": "Str0ng!Pass", "verification_token": token})
+        assert r1.status_code == 200, r1.text
+        r2 = requests.post(f"{API}/auth/register/request-otp", json={"name": "Dup", "email": email})
+        assert r2.status_code == 409
+        assert r2.json()["detail"]["code"] == "email_registered"
+
+    def test_first_time_account_has_onboarding_incomplete(self):
+        email = self._email()
+        token = self._verified_token(email)
+        r = requests.post(f"{API}/auth/register/complete", json={"email": email, "password": "Str0ng!Pass", "verification_token": token})
+        assert r.status_code == 200, r.text
+        assert r.json()["user"]["onboarding_completed"] is False
+
+    def test_completing_onboarding_persists(self):
+        email = self._email()
+        token = self._verified_token(email)
+        reg = requests.post(
+            f"{API}/auth/register/complete", json={"email": email, "password": "Str0ng!Pass", "verification_token": token}
+        ).json()
+        r = requests.put(f"{API}/users/me", json={"onboarding_completed": True}, headers=_h(reg["session_token"]))
+        assert r.status_code == 200 and r.json()["user"]["onboarding_completed"] is True
+        # Persists server-side, not just in that response: a fresh session sees it too.
+        login = requests.post(f"{API}/auth/login", json={"email": email, "password": "Str0ng!Pass"})
+        assert login.status_code == 200
+        assert login.json()["user"]["onboarding_completed"] is True
+
+    def test_existing_users_not_forced_through_onboarding(self, user_a):
+        # user_a comes from /auth/register/dev-instant, which sets onboarding_completed=True (an
+        # "already onboarded" account) — modeling a pre-existing user after backfill_onboarding_state.
+        assert user_a["user"]["onboarding_completed"] is True
 
 
 # ------------------------------------------------------------------ GOOGLE SIGN-IN (against a fake Google)
@@ -1168,7 +1394,7 @@ class TestGoogleLogin:
 
     def test_links_to_existing_password_account(self, fake_google):
         email = f"g_{uuid.uuid4().hex[:8]}@example.com"
-        reg = requests.post(f"{API}/auth/register", json={"email": email, "password": "test1234", "name": "Pat"}).json()
+        reg = requests.post(f"{API}/auth/register/dev-instant", json={"email": email, "password": "test1234", "name": "Pat"}).json()
         sid, _l = _google_login(email)
         g = requests.post(f"{API}/auth/session", json={"session_id": sid}).json()
         assert g["user"]["user_id"] == reg["user"]["user_id"]

@@ -1,40 +1,43 @@
 {
   "app_name": "BookLoop",
-  "personality": "3 Editorial Mobile LIGHT",
-  "personality_one_liner": "A warm, editorial, and accessible local marketplace that feels like stepping into a cozy independent bookstore.",
+  "personality": "Dark Premium Editorial",
+  "personality_one_liner": "A warm, literary, premium local marketplace — modernism and subtle glassmorphism over a deep Ink-green atmosphere, with book covers providing the color.",
   "color": {
-    "surface": "#F7F4EE",
-    "onSurface": "#17211F",
-    "surfaceSecondary": "#FFFFFF",
-    "onSurfaceSecondary": "#17211F",
-    "surfaceTertiary": "#F0ECE1",
-    "onSurfaceTertiary": "#17211F",
-    "surfaceInverse": "#17211F",
+    "surface": "#101614",
+    "onSurface": "#F7F4EE",
+    "surfaceSecondary": "#1B2422",
+    "onSurfaceSecondary": "#F7F4EE",
+    "surfaceTertiary": "#161E1C",
+    "onSurfaceTertiary": "#F7F4EE",
+    "surfaceInverse": "#232E2B",
     "onSurfaceInverse": "#F7F4EE",
     "brand": "#D96C4A",
     "brandPrimary": "#D96C4A",
     "onBrandPrimary": "#FFFFFF",
     "brandSecondary": "#879B7A",
     "onBrandSecondary": "#FFFFFF",
-    "brandTertiary": "#F2E8E3",
-    "onBrandTertiary": "#D96C4A",
+    "brandTertiary": "rgba(217,108,74,0.18)",
+    "onBrandTertiary": "#E08262",
     "success": "#879B7A",
     "onSuccess": "#FFFFFF",
     "warning": "#E8A365",
     "onWarning": "#17211F",
-    "error": "#B33939",
+    "error": "#D9584F",
     "onError": "#FFFFFF",
-    "info": "#707775",
-    "onInfo": "#FFFFFF",
-    "border": "#E8E5E1",
-    "borderStrong": "#D6D1C9",
-    "divider": "#E8E5E1",
-    "muted": "#707775",
-    "onBrand": "#FFFFFF"
+    "info": "#6E7A73",
+    "onInfo": "#F7F4EE",
+    "border": "rgba(247,244,238,0.10)",
+    "borderStrong": "rgba(247,244,238,0.20)",
+    "divider": "rgba(247,244,238,0.08)",
+    "muted": "#8B968F",
+    "onBrand": "#FFFFFF",
+    "glassFill": "rgba(35,46,43,0.55)",
+    "glassBorder": "rgba(247,244,238,0.12)"
   },
   "typography": {
     "displayFontFamily": "Fraunces",
     "textFontFamily": "DM Sans",
+    "rule": "Editorial contrast: Fraunces (serif) for major headings and emotional/literary moments (screen titles, onboarding, welcome). DM Sans (sans) for everything else — body, navigation, buttons, metadata, forms, filters, labels. Do not use serif everywhere; BookLoop should feel like a reading product, not a banking app.",
     "scale": {
       "sm": 12,
       "base": 14,
@@ -54,24 +57,33 @@
     "3xl": 48
   },
   "radius_tokens": {
-    "sm": 6,
-    "md": 12,
-    "lg": 20,
-    "pill": 999
+    "sm": "10-12",
+    "control": "14-18",
+    "card": "18-22",
+    "panel": "22-28",
+    "pill": 999,
+    "rule": "Pills are for filters, genres, statuses, location, compact actions. Cards keep structured geometry — avoid making every component pill-shaped."
   },
-  "shadow_tier": "1",
+  "shadow_tier": "1 — soft only. Reserve visible shadow for the primary CTA (subtle terracotta-tinted glow) and floating elements (Add Book FAB). Cards rely on the glass border, not shadow, for separation.",
   "navigation": "bottom_tabs",
   "icon_set": "Phosphor",
   "glassmorphism": {
-    "enabled": false,
-    "do's": ["Use solid white or surface layers for elevation as per editorial design."],
-    "dont's": ["No heavy blur or glass effects. Keep it matte and grounded."]
+    "enabled": true,
+    "do's": [
+      "Subtle, functional glass: dark translucent fill + thin low-contrast border + very soft shadow, via the shared GlassSurface component.",
+      "Use for: search bars, filter pills, profile/people/book cards, auth fields, modal sheets, action panels, OTP fields, password fields, welcome screen elements.",
+      "Reserve real BlurView for static surfaces (search bar, modals, auth/welcome backgrounds). Inside scrolling lists (FlatList rows, horizontal chip scrollers) use the flat translucent fill without blur — same visual result, no per-item blur cost."
+    ],
+    "dont's": [
+      "No bright/high-opacity glass, huge blur radii, neon borders, or strong reflections — not an Apple Vision Pro imitation.",
+      "Readability comes first: never let glass reduce text contrast below comfortable reading levels."
+    ]
   },
   "platform_libraries": {
     "glass": {
       "ios": "expo-blur",
       "android": "expo-blur",
-      "low_end_android_fallback": "solid surfaceSecondary"
+      "low_end_android_fallback": "solid glassFill (no BlurView) — see src/components/GlassSurface.tsx"
     },
     "image": "expo-image",
     "blur": "expo-blur",
@@ -86,9 +98,29 @@
       "states": {
         "loading": "Spinner over faded background.",
         "empty": "N/A",
-        "error": "Standard inline red error text for forms."
+        "error": "Standard inline error text for forms."
       },
-      "layout": "Full-bleed background image of a cozy independent bookstore. A gradient scrim from transparent top to heavy surface at bottom. White overlay card holding the brand wordmark (in serif), tagline, and large Terracotta primary CTA. Clean form inputs below."
+      "layout": "Full-bleed atmospheric background image (bookstore interior) with a gradient scrim from transparent top to deep Ink-dark bottom. A glass card (GlassSurface, panel radius) holds the brand wordmark (serif), tagline, and a large Terracotta primary CTA over glass form inputs."
+    },
+    {
+      "name": "Verify Email / OTP",
+      "purpose": "Six-digit code entry after Sign Up, before password creation.",
+      "states": {
+        "loading": "Inline spinner on the Verify button while checking the code.",
+        "empty": "N/A",
+        "error": "Concise inline error text (incorrect code, expired, too many attempts) — never an aggressive full-field red state."
+      },
+      "layout": "Large serif heading (\"Verify your email\"), explanatory sans body copy, six separate glass OTP boxes, resend timer/link beneath. Subtle progress indicator showing Account -> Verify -> Password. Should still read as BookLoop, not a banking OTP screen."
+    },
+    {
+      "name": "Create Password",
+      "purpose": "Password creation after successful email verification.",
+      "layout": "Glass password + confirm-password fields with show/hide toggles. Live requirement checklist (8+ chars, upper, lower, number, special) — satisfied items in Sage, unsatisfied in muted neutral. Terracotta primary CTA, enabled only once client-side requirements pass (server independently re-validates)."
+    },
+    {
+      "name": "Welcome",
+      "purpose": "One-time, first-registration-only welcome moment before entering Discover.",
+      "layout": "Atmospheric background (blurred books/plants/light), generous whitespace, serif emotional headline (\"Welcome to BookLoop, {firstName}.\"), a short literary supporting line, Terracotta \"Start exploring\" CTA, subtle \"Read. Swap. Repeat.\" brand line. Gentle fade/slide entrance only — no confetti, no badges, no gamification."
     },
     {
       "name": "Discover",
@@ -98,7 +130,7 @@
         "empty": "Illustration of vintage books with 'No active exchangers nearby'.",
         "error": "Error message with a retry button."
       },
-      "layout": "Top section: sticky search pill (Airbnb style) + segmented control (People / Books). If People: vertical list of wide cards. Each card shows avatar, name, distance, 'exchanging' sage dot, and a horizontal scroll of 3 mini book covers. If Books: 2-column masonry grid (Vinted style) of large book covers with crisp typography underneath."
+      "layout": "Location control + notifications/profile up top. Large serif editorial headline (\"Discover people and their books.\") with a supporting sans sentence. Glass search field, glass filter pills. 'People near you' as glass PersonCards (avatar, name, exchanging dot, distance, rating + swap count, genre chips, mini book-cover preview). 'Popular books nearby' as a book-cover-led grid — the cover is the hero, minimal chrome."
     },
     {
       "name": "Map",
@@ -108,47 +140,27 @@
         "empty": "N/A",
         "error": "Location permission error with a settings CTA."
       },
-      "layout": "Full-screen map. Custom markers (Sage bubbles) showing counts. Tapping a cluster triggers a Bottom Sheet (gorhom/bottom-sheet) revealing '342 people nearby' headline (serif), popular genre tags, and a 'Explore People' CTA. Map stays visible behind."
+      "layout": "Full-screen map with Sage marker/cluster treatment integrated into the dark theme. Overlay controls use dark glass. Tapping a cluster triggers a Bottom Sheet (gorhom/bottom-sheet, glass) revealing a serif headline ('342 people nearby...'), popular genre tags, and an 'Explore People' CTA. Map functionality itself is unchanged by the visual pass."
     },
     {
       "name": "My Books",
       "purpose": "Personal inventory management for exchanging.",
-      "states": {
-        "loading": "Skeleton grid.",
-        "empty": "Illustration of empty shelves and a primary 'Add your first book' CTA.",
-        "error": "Retry loading inventory."
-      },
-      "layout": "Editorial header (serif title). Sticky horizontal filter chips (Available, Reserved, Swapped). 2-column grid of user's books. Each item has a cover, title, and a subtle status tag (Sage for Available, muted for Swapped)."
+      "layout": "Serif editorial header. Sticky glass filter chips (Available, Reserved, Swapped). 2-column grid of book covers as the visual hero, minimal text beneath, subtle status tag (Sage for Available, muted for Swapped)."
     },
     {
       "name": "Swaps",
       "purpose": "Manage active, incoming, and completed exchange requests.",
-      "states": {
-        "loading": "Skeleton list of chat rows.",
-        "empty": "Graphic of two books swapping, 'No active swaps yet'.",
-        "error": "Retry fetching swaps."
-      },
-      "layout": "List layout of conversations. Each row shows avatar, name, requested book cover thumbnail, and last message. Inside chat: Standard message bubbles + distinct 'Swap Action Cards' (e.g., 'Maria proposed a swap', 'Accept', 'Decline') embedded in the chat timeline."
+      "layout": "List of conversations (avatar, name, requested book cover thumbnail, last message) over dark surfaces. Inside chat: message bubbles + structured, special-but-not-flashy glass 'Swap Action Cards' embedded in the timeline. Status colors stay accessible on dark."
     },
     {
       "name": "Profile",
       "purpose": "View and edit personal details and swap history.",
-      "states": {
-        "loading": "Skeleton profile view.",
-        "empty": "N/A",
-        "error": "Error fetching profile."
-      },
-      "layout": "Large rounded avatar, name, location, and rating badge. 'Currently exchanging' toggle switch prominently placed. Below: sections for 'Interested Genres' (chips), 'Languages', and 'Swap History'. Clean, list-based layout."
+      "layout": "Large rounded avatar, name, location, rating badge. Subtle glass statistics. 'Currently exchanging' toggle prominently placed. Book grid prioritizing covers. Genre chips, languages, swap history below, clean list-based layout."
     },
     {
       "name": "Add Book Flow",
       "purpose": "Quick, multi-step form to list a new book.",
-      "states": {
-        "loading": "Submitting state with spinner.",
-        "empty": "N/A",
-        "error": "Validation errors on inputs."
-      },
-      "layout": "A full-screen modal or sheet. Step 1: Upload cover photo (large square target). Step 2: Title & Author (large text fields). Step 3: Condition (radio buttons). Sticky 'Next/Submit' button anchored to the keyboard."
+      "layout": "Full-screen modal/sheet over dark glass. Step 1: cover photo upload (large square target). Step 2: title & author (glass text fields). Step 3: condition. Sticky 'Next/Submit' button anchored to the keyboard."
     }
   ],
   "images": {
@@ -182,13 +194,14 @@
     "pull_to_refresh": "impactLight"
   },
   "instructions_to_main_agent": [
-    "Design strictly for the '3 Editorial Mobile' personality: generous spacing, grounded matte surfaces (no heavy glassmorphism), and high typographic hierarchy.",
-    "Use Fraunces (serif) only for major headings (Auth, Screen Titles, Map Cluster Bottom Sheet headlines). Use DM Sans for everything else (body, labels, buttons).",
-    "The core background is Warm Paper (#F7F4EE). Use pure White (#FFFFFF) for cards and bottom sheets to create a crisp, editorial contrast.",
-    "Navigation: 5-item bottom tab bar. The middle item is a floating '+ Add Book' button. The active tab indicator should be Terracotta.",
-    "People Cards (Discover tab): Layout horizontally. Avatar, name, distance on top. A small 'exchanging' dot in Sage. Below that, a horizontal scrollview of 3 mini book covers they offer.",
-    "Book Grids: Use a 2-column masonry or grid layout (Vinted style) for books. The cover image is the hero; text underneath should be clean and readable.",
-    "For the Auth/Onboarding screen background, ensure a gradient scrim (transparent to surfaceInverse) is layered over the image so the white text and CTA pop perfectly.",
+    "Design for the 'Dark Premium Editorial' personality: deep Ink-green atmosphere (not flat black), subtle functional glassmorphism, generous spacing, high typographic hierarchy.",
+    "Use Fraunces (serif) only for major headings and emotional/literary moments. Use DM Sans for everything else (body, labels, buttons, metadata, filters).",
+    "The core background is a darkened Deep Ink (#101614). Elevated surfaces (cards, sheets, glass) lighten from there — see the surface/surfaceSecondary/surfaceTertiary/surfaceInverse ramp.",
+    "Glass surfaces go through the shared GlassSurface component: real BlurView for static surfaces, flat translucent fill (no blur) inside scrolling lists.",
+    "Navigation: 5-item bottom tab bar, physically LTR in every language including Arabic. The middle-ish item is a floating '+ Add Book' Terracotta button positioned above Profile. Never change this order or mirror it under RTL.",
+    "Terracotta is reserved for the one important action on a screen — do not recolor every button orange.",
+    "People Cards (Discover tab): avatar, name, exchanging Sage dot, distance, rating + swap count on top; genre chips; horizontal scroll of mini book covers below, all on a glass surface.",
+    "Book Grids: the cover image is the hero and brings color into the dark UI; keep text underneath minimal and clean.",
     "Ensure all primary buttons (Terracotta) are pinned to the bottom of the screen with proper safe area padding, outside of the ScrollView.",
     "Avoid any blue, purple, or indigo shades completely as per the no-tolerance color rule."
   ]

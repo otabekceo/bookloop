@@ -76,6 +76,14 @@
     "changeSubtitle": "اختر لغة التطبيق بالكامل.",
     "current": "اللغة الحالية"
   },
+  "appearance": {
+    "title": "المظهر",
+    "subtitle": "اختر شكل ظهور BookLoop. يمكنك تغيير هذا في أي وقت.",
+    "system": "النظام",
+    "systemHint": "استخدام إعدادات الجهاز",
+    "light": "فاتح",
+    "dark": "داكن"
+  },
   "auth": {
     "welcomeBack": "مرحباً بعودتك",
     "joinLoop": "انضم إلى الحلقة",
@@ -88,12 +96,57 @@
     "password": "كلمة المرور",
     "signIn": "تسجيل الدخول",
     "createAccount": "إنشاء حساب",
+    "continue": "متابعة",
     "continueWithGoogle": "المتابعة باستخدام Google",
     "newHere": "أول مرة هنا؟ ",
     "alreadyHaveAccount": "لديك حساب بالفعل؟ ",
     "fillAllFields": "الرجاء تعبئة جميع الحقول",
     "somethingWentWrong": "حدث خطأ ما",
-    "googleFailed": "فشل تسجيل الدخول عبر Google"
+    "googleFailed": "فشل تسجيل الدخول عبر Google",
+    "emailAlreadyRegistered": "يوجد حساب بهذا البريد الإلكتروني بالفعل",
+    "stepAccount": "الحساب",
+    "stepVerify": "التحقق",
+    "stepPassword": "كلمة المرور"
+  },
+  "otp": {
+    "title": "تحقّق من بريدك الإلكتروني",
+    "subtitle": "أرسلنا رمزاً إلى {{email}}",
+    "codeLabel": "رمز التحقق",
+    "verify": "تحقّق",
+    "resendIn": "إعادة إرسال الرمز خلال {{seconds}} ثانية",
+    "resend": "إعادة إرسال الرمز",
+    "resent": "تم إعادة إرسال الرمز",
+    "errorInvalid": "رمز التحقق غير صحيح",
+    "errorExpired": "انتهت صلاحية رمز التحقق",
+    "errorTooManyAttempts": "محاولات كثيرة جداً — اطلب رمزاً جديداً",
+    "errorRateLimited": "الرجاء الانتظار قبل طلب رمز آخر"
+  },
+  "createPassword": {
+    "title": "إنشاء كلمة المرور",
+    "subtitle": "أوشكت على الانتهاء — أمّن حسابك.",
+    "password": "كلمة المرور",
+    "confirmPassword": "تأكيد كلمة المرور",
+    "requirementsTitle": "يجب أن تحتوي كلمة المرور على:",
+    "reqLength": "8 أحرف على الأقل",
+    "reqUpper": "حرف كبير واحد",
+    "reqLower": "حرف صغير واحد",
+    "reqNumber": "رقم واحد",
+    "reqSpecial": "رمز خاص واحد",
+    "mismatch": "كلمتا المرور غير متطابقتين",
+    "submit": "إنشاء حساب",
+    "show": "إظهار كلمة المرور",
+    "hide": "إخفاء كلمة المرور"
+  },
+  "welcome": {
+    "heading": "مرحباً بك في\nBookLoop، {{name}}.",
+    "line1": "كل كتاب يستحق قارئاً آخر.",
+    "line2": "قد يحمل رفّك القصة المفضلة القادمة لشخص آخر.",
+    "supporting": "شارك ما قرأته.\nاكتشف ما ينتظرك في محيطك.\nأبقِ القصص متداولة.",
+    "cta": "ابدأ الاستكشاف",
+    "brandLine": "اقرأ. بادل. كرّر."
+  },
+  "constructionOverlay": {
+    "message": "نعمل على جعل تجربتك في BookLoop أفضل.\nشكرًا لكونك جزءًا من رحلتنا."
   },
   "tabs": {
     "discover": "اكتشف",
@@ -187,6 +240,7 @@
     "nowExchanging": "أنت الآن تتبادل",
     "exchangingPaused": "تم إيقاف التبادل",
     "couldNotUpdate": "تعذّر التحديث",
+    "couldNotUpdateExchangeStatus": "تعذّر تحديث حالة التبادل",
     "inviteCopied": "تم نسخ رابط الدعوة"
   },
   "person": {

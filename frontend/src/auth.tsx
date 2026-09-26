@@ -28,14 +28,29 @@ export type User = {
   rating_count: number;
   swaps_count: number;
   preferred_language?: string | null;
+  /** False only right after a brand-new registration, until the one-time Welcome screen is dismissed. */
+  onboarding_completed: boolean;
 };
+
+/** Response shape shared by request-otp and resend-otp. `debug_otp` only exists when the backend's
+ * OTP_DEBUG_MODE is on (local development/testing) — never rely on it being present. */
+export type OtpRequestResult = { ok: boolean; expires_in_seconds: number; resend_after_seconds: number; debug_otp?: string };
 
 type Status = "loading" | "authed" | "guest";
 
 type AuthContextType = {
   user: User | null;
   status: Status;
-  register: (email: string, password: string, name: string) => Promise<void>;
+  /** Step 1 of registration: name + email -> sends a 6-digit code. */
+  requestOtp: (name: string, email: string, preferredLanguage?: string) => Promise<OtpRequestResult>;
+  /** Requests a fresh code for an in-progress registration; invalidates the previous one. */
+  resendOtp: (email: string) => Promise<OtpRequestResult>;
+  /** Step 2: redeems the code for a short-lived token proving email ownership. */
+  verifyOtp: (email: string, code: string) => Promise<{ verification_token: string; expires_in_seconds: number }>;
+  /** Step 3: creates the account (server independently re-validates the password) and signs in. */
+  completeRegistration: (email: string, password: string, verificationToken: string) => Promise<void>;
+  /** Marks the one-time Welcome screen as seen. Never shown again after this resolves. */
+  completeOnboarding: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
@@ -191,17 +206,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => sub.remove();
   }, [processSessionId]);
 
-  const register = useCallback(
-    async (email: string, password: string, name: string) => {
-      const data = await apiFetch<{ session_token: string; user: User }>("/api/auth/register", {
+  // Registration: request-otp -> verify-otp -> complete. None of this trusts the client — the
+  // backend independently enforces OTP expiry/attempts and the password policy either way.
+  const requestOtp = useCallback(
+    (name: string, email: string, preferredLanguage?: string) =>
+      apiFetch<OtpRequestResult>("/api/auth/register/request-otp", {
         method: "POST",
-        // The language picked on the first-run screen is saved with the new account.
-        body: { email, password, name, preferred_language: language },
+        // The language picked on the first-run screen is saved with the new account, same as before.
+        body: { name, email, preferred_language: preferredLanguage ?? language },
+      }),
+    [language],
+  );
+
+  const resendOtp = useCallback(
+    (email: string) => apiFetch<OtpRequestResult>("/api/auth/register/resend-otp", { method: "POST", body: { email } }),
+    [],
+  );
+
+  const verifyOtp = useCallback(
+    (email: string, code: string) =>
+      apiFetch<{ verification_token: string; expires_in_seconds: number }>("/api/auth/register/verify-otp", {
+        method: "POST",
+        body: { email, code },
+      }),
+    [],
+  );
+
+  const completeRegistration = useCallback(
+    async (email: string, password: string, verificationToken: string) => {
+      const data = await apiFetch<{ session_token: string; user: User }>("/api/auth/register/complete", {
+        method: "POST",
+        body: { email, password, verification_token: verificationToken },
       });
       await applySession(data.session_token, data.user);
     },
-    [applySession, language],
+    [applySession],
   );
+
+  const completeOnboarding = useCallback(async () => {
+    const data = await apiFetch<{ user: User }>("/api/users/me", { method: "PUT", body: { onboarding_completed: true } });
+    setUser(data.user);
+  }, []);
 
   const login = useCallback(
     async (email: string, password: string) => {
@@ -288,7 +333,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         status,
-        register,
+        requestOtp,
+        resendOtp,
+        verifyOtp,
+        completeRegistration,
+        completeOnboarding,
         login,
         loginWithGoogle,
         logout,

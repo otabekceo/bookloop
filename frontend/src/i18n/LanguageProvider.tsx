@@ -15,7 +15,7 @@ import i18n, {
   loadStoredLanguage,
   persistLanguage,
 } from "./index";
-import { syncNativeDirection, waitForOverlayPaint } from "./direction";
+import { syncNativeDirection, waitForBootReloadFallback, waitForOverlayPaint } from "./direction";
 import { createLanguageSwitcher } from "./languageSwitch";
 import {
   getLanguageMeta,
@@ -64,27 +64,88 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const userChoseRef = useRef(false);
 
   // Bootstrap: read the persisted language before the first meaningful render.
+  //
+  // FAIL-SAFE: every path through this effect — success, a caught error, or a reload that never lands — must
+  // reach the `finally` below, which is the ONLY place `isReady` is set. That is what guarantees the app can
+  // never be stuck on the loading screen forever: whatever went wrong, we log it and still render, because a
+  // rendered app in the wrong direction (corrected visually by the root `direction` style, and correct again
+  // on the next real restart since the native preference is written unconditionally either way) is always
+  // safer than an app that never renders at all.
+  //
+  // TEMPORARY: the console.log calls below are startup diagnostics for a hard-to-reproduce physical-device/
+  // Expo Go boot issue. Safe to remove once boot is confirmed reliable; they carry no user data.
   useEffect(() => {
     let cancelled = false;
+    let reachedFinally = false;
+
+    console.log("[LanguageBootstrap] START");
+
     (async () => {
-      const stored = await loadStoredLanguage();
-      if (cancelled) return;
-      if (stored) {
-        setLanguageState(stored);
-        await i18n.changeLanguage(stored);
-        // Make the native layout direction match the saved language on every start. This also repairs a
-        // device left in the wrong direction; if a reload was triggered, wait for it instead of rendering.
-        if ((await syncNativeDirection(isRTLLanguage(stored))) === "reloading") return;
-        setNeedsSelection(false);
-      } else {
-        // Brand-new user: keep the default rendering language but flag that we
-        // must show the language picker before login/signup.
-        setNeedsSelection(true);
+      try {
+        const stored = await loadStoredLanguage();
+        console.log("[LanguageBootstrap] stored language:", stored);
+        if (cancelled) return;
+
+        if (stored) {
+          setLanguageState(stored);
+          await i18n.changeLanguage(stored);
+          console.log("[LanguageBootstrap] i18n changed");
+
+          // Make the native layout direction match the saved language on every start. This also repairs a
+          // device left in the wrong direction. Guarded on its own: a throw here (seen on some physical-
+          // device/Expo Go native-module setups) must not abort the rest of boot.
+          //
+          // allowReload=false: BOOT must never trigger a native reload. On some physical-device/Expo Go
+          // setups, reloading this early makes Expo Go try to re-download the JS bundle from Metro and can
+          // fail with a FATAL native error ("Failed to download remote update") that no JS try/catch can
+          // catch or recover from — the opposite of a fail-safe. The native preference is still written
+          // (inside syncNativeDirection) so the direction is correct on the next real app start, and the
+          // visible layout is already correct right now via the root `direction` style either way. Only the
+          // explicit in-app language switch (./languageSwitch.ts) is allowed to reload, once the app — and
+          // its connection to the dev server — is already up and stable.
+          let result: Awaited<ReturnType<typeof syncNativeDirection>> = "in-sync";
+          try {
+            result = await syncNativeDirection(isRTLLanguage(stored), undefined, false);
+          } catch (e) {
+            console.error("[LanguageBootstrap] syncNativeDirection threw:", e);
+            result = "pending"; // direction may be visually-only this run; boot still continues
+          }
+          console.log("[LanguageBootstrap] direction result:", result);
+
+          if (result === "reloading") {
+            // Should not happen at boot (allowReload=false above) — kept as defense in depth in case that
+            // ever changes, so boot still can't hang even then.
+            console.log("[LanguageBootstrap] unexpected reload at boot; fallback started");
+            await waitForBootReloadFallback();
+            console.log("[LanguageBootstrap] fallback resolved. cancelled:", cancelled);
+            if (cancelled) return; // the reload DID land: this context is being torn down
+          }
+          setNeedsSelection(false);
+        } else {
+          // Brand-new user: keep the default rendering language but flag that we
+          // must show the language picker before login/signup.
+          console.log("[LanguageBootstrap] no stored language; needs selection");
+          setNeedsSelection(true);
+        }
+      } catch (e) {
+        // Anything unexpected (storage, i18n, or a native-module error not caught above): log it and fall
+        // through to `finally` below rather than leaving the app on an infinite spinner.
+        console.error("[LanguageBootstrap] bootstrap failed, rendering with current state:", e);
+      } finally {
+        reachedFinally = true;
+        if (cancelled) {
+          console.log("[LanguageBootstrap] COMPLETE (cancelled: not setting state)");
+        } else {
+          console.log("[LanguageBootstrap] setting ready");
+          setIsReady(true);
+          console.log("[LanguageBootstrap] COMPLETE");
+        }
       }
-      setIsReady(true);
     })();
+
     return () => {
       cancelled = true;
+      if (!reachedFinally) console.log("[LanguageBootstrap] cleanup before completion (cancelled = true)");
     };
   }, []);
 
@@ -125,7 +186,9 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       setNeedsSelection(false);
       await i18n.changeLanguage(next);
       await persistLanguage(next);
-      await syncNativeDirection(isRTLLanguage(next));
+      // allowReload=false: this runs automatically right after sign-in (no user tap), sharing boot's early-
+      // lifecycle reload risk (see the boot call above) — not a deliberate switch, so it must not reload.
+      await syncNativeDirection(isRTLLanguage(next), undefined, false);
     },
     [],
   );

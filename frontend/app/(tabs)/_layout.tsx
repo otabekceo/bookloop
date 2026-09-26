@@ -78,13 +78,13 @@ function CustomTabBar({ state, navigation }: any) {
                 minWidth: 16,
                 height: 16,
                 borderRadius: 8,
-                backgroundColor: colors.brandPrimary,
+                backgroundColor: colors.notification,
                 alignItems: "center",
                 justifyContent: "center",
                 paddingHorizontal: 4,
               }}
             >
-              <AppText variant="caption" color={colors.onBrandPrimary} style={{ fontSize: 10 }}>
+              <AppText variant="caption" color={colors.onError} style={{ fontSize: 10 }}>
                 {badge}
               </AppText>
             </View>

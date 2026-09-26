@@ -76,6 +76,14 @@
     "changeSubtitle": "Pick the language for the whole app.",
     "current": "Current language"
   },
+  "appearance": {
+    "title": "Appearance",
+    "subtitle": "Choose how BookLoop looks. You can change this any time.",
+    "system": "System",
+    "systemHint": "Use device settings",
+    "light": "Light",
+    "dark": "Dark"
+  },
   "auth": {
     "welcomeBack": "Welcome back",
     "joinLoop": "Join the loop",
@@ -88,12 +96,57 @@
     "password": "Password",
     "signIn": "Sign in",
     "createAccount": "Create account",
+    "continue": "Continue",
     "continueWithGoogle": "Continue with Google",
     "newHere": "New here? ",
     "alreadyHaveAccount": "Already have an account? ",
     "fillAllFields": "Please fill in all fields",
     "somethingWentWrong": "Something went wrong",
-    "googleFailed": "Google sign-in failed"
+    "googleFailed": "Google sign-in failed",
+    "emailAlreadyRegistered": "An account with this email already exists",
+    "stepAccount": "Account",
+    "stepVerify": "Verify",
+    "stepPassword": "Password"
+  },
+  "otp": {
+    "title": "Verify your email",
+    "subtitle": "We sent a code to {{email}}",
+    "codeLabel": "Verification code",
+    "verify": "Verify",
+    "resendIn": "Resend code in {{seconds}}s",
+    "resend": "Resend code",
+    "resent": "Code resent",
+    "errorInvalid": "Incorrect verification code",
+    "errorExpired": "Verification code expired",
+    "errorTooManyAttempts": "Too many attempts — request a new code",
+    "errorRateLimited": "Please wait before requesting another code"
+  },
+  "createPassword": {
+    "title": "Create password",
+    "subtitle": "Almost there — secure your account.",
+    "password": "Password",
+    "confirmPassword": "Confirm password",
+    "requirementsTitle": "Password must contain:",
+    "reqLength": "At least 8 characters",
+    "reqUpper": "One uppercase letter",
+    "reqLower": "One lowercase letter",
+    "reqNumber": "One number",
+    "reqSpecial": "One special character",
+    "mismatch": "Passwords do not match",
+    "submit": "Create account",
+    "show": "Show password",
+    "hide": "Hide password"
+  },
+  "welcome": {
+    "heading": "Welcome to\nBookLoop, {{name}}.",
+    "line1": "Every book deserves another reader.",
+    "line2": "Your shelf might hold someone else's next favourite story.",
+    "supporting": "Share what you've read.\nDiscover what's waiting nearby.\nKeep stories moving.",
+    "cta": "Start exploring",
+    "brandLine": "Read. Swap. Repeat."
+  },
+  "constructionOverlay": {
+    "message": "We're making BookLoop better for you.\nThanks for being part of the journey."
   },
   "tabs": {
     "discover": "Discover",
@@ -187,6 +240,7 @@
     "nowExchanging": "You're now exchanging",
     "exchangingPaused": "Exchanging paused",
     "couldNotUpdate": "Could not update",
+    "couldNotUpdateExchangeStatus": "Couldn't update exchange status",
     "inviteCopied": "Invite link copied"
   },
   "person": {

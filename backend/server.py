@@ -25,6 +25,8 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 
+from email_provider import get_email_provider, otp_email_body, EmailNotConfiguredError, EmailSendError
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -214,6 +216,8 @@ class ProfileUpdate(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
     preferred_language: Optional[str] = None
+    # Set to true by the Welcome screen's "Start exploring" tap — never shown again after that.
+    onboarding_completed: Optional[bool] = None
 
 
 class BookBody(BaseModel):
@@ -328,7 +332,17 @@ def public_user(u: dict, private: bool = False) -> dict:
         "preferred_language": u.get("preferred_language"),
     }
     if private:
-        out.update({"email": u.get("email", ""), "lat": u.get("lat"), "lng": u.get("lng")})
+        out.update(
+            {
+                "email": u.get("email", ""),
+                "lat": u.get("lat"),
+                "lng": u.get("lng"),
+                # Missing on any account that predates this field (defaults True: never re-surface the
+                # welcome screen for an existing user — startup's backfill_onboarding_state() also sets
+                # this explicitly, this default is just extra safety before/around that).
+                "onboarding_completed": u.get("onboarding_completed", True),
+            }
+        )
     return out
 
 
@@ -393,20 +407,84 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     return user
 
 
-@api.post("/auth/register")
-async def register(body: RegisterBody):
-    # bcrypt only uses the first 72 bytes and (v5+) refuses longer input, so say so up front.
-    if len(body.password.encode()) > 72:
-        raise HTTPException(status_code=400, detail="Password is too long (maximum 72 bytes)")
-    existing = await db.users.find_one({"email": body.email.lower()})
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    uid = new_id("user")
-    user = {
-        "user_id": uid,
-        "email": body.email.lower(),
-        "password_hash": hash_pw(body.password),
-        "name": body.name,
+# --- Email-verified registration (OTP) ---------------------------------------
+# Flow: request-otp (send a code) -> verify-otp (redeem it for a short-lived verification_token) ->
+# complete (password + that token -> the account is actually created). No step trusts the client:
+# "email verified" only ever means "holds a verification_token this server issued and hasn't expired
+# or been redeemed yet" — never a boolean the frontend sends.
+OTP_LENGTH = 6
+OTP_TTL_MINUTES = 10
+OTP_MAX_ATTEMPTS = 5
+OTP_RESEND_COOLDOWN_SECONDS = 60
+OTP_MAX_SENDS = 10  # absolute cap per pending registration — defense in depth beyond the cooldown
+EMAIL_VERIFICATION_TTL_MINUTES = 15
+PASSWORD_MIN_LENGTH = 8
+# Debug/test only: echoes OTP codes in API responses and enables the instant-registration test
+# endpoint below. NEVER true on a backend reachable from the internet — see backend/.env.example.
+OTP_DEBUG_MODE = (os.environ.get("OTP_DEBUG_MODE") or "").strip().lower() in ("1", "true", "yes")
+if OTP_DEBUG_MODE:
+    logger.warning(
+        "OTP_DEBUG_MODE is ON: OTP codes are echoed in API responses and /auth/register/dev-instant "
+        "is enabled. Never run with this on a backend reachable from the internet."
+    )
+
+
+class RequestOtpBody(BaseModel):
+    name: str
+    email: EmailStr
+    preferred_language: Optional[str] = None
+
+
+class ResendOtpBody(BaseModel):
+    email: EmailStr
+
+
+class VerifyOtpBody(BaseModel):
+    email: EmailStr
+    code: str
+
+
+class CompleteRegistrationBody(BaseModel):
+    email: EmailStr
+    password: str
+    verification_token: str
+
+
+def _otp_error(status: int, code: str, message: str) -> HTTPException:
+    """A structured error the frontend can map to a translated message via `code`, with `message`
+    (English) as the fallback for anything that doesn't recognize the code."""
+    return HTTPException(status_code=status, detail={"message": message, "code": code})
+
+
+def validate_password(pw: str) -> List[str]:
+    """Returns the unmet requirement codes (empty = valid). This — not the frontend's live checklist —
+    is the actual policy: the frontend mirrors these same rules only for UX, never as the source of truth."""
+    violations = []
+    if len(pw) < PASSWORD_MIN_LENGTH:
+        violations.append("too_short")
+    if not re.search(r"[A-Z]", pw):
+        violations.append("no_upper")
+    if not re.search(r"[a-z]", pw):
+        violations.append("no_lower")
+    if not re.search(r"[0-9]", pw):
+        violations.append("no_number")
+    if not re.search(r"[^A-Za-z0-9]", pw):
+        violations.append("no_special")
+    return violations
+
+
+def _generate_otp() -> str:
+    return f"{secrets.randbelow(10 ** OTP_LENGTH):0{OTP_LENGTH}d}"
+
+
+def _build_user_doc(
+    email: str, name: str, password_hash: Optional[str], preferred_language: Optional[str], onboarding_completed: bool
+) -> dict:
+    return {
+        "user_id": new_id("user"),
+        "email": email.lower(),
+        "password_hash": password_hash,
+        "name": name,
         "avatar_url": None,
         "bio": "",
         "city": "Messina",
@@ -420,13 +498,173 @@ async def register(body: RegisterBody):
         "rating_count": 0,
         "swaps_count": 0,
         # The language picked on the first-run screen; unknown values are ignored, not an error.
-        "preferred_language": body.preferred_language if body.preferred_language in SUPPORTED_LANGUAGES else None,
+        "preferred_language": preferred_language if preferred_language in SUPPORTED_LANGUAGES else None,
+        # New accounts get the one-time welcome screen; backfilled True for every account that
+        # existed before this field did (see backfill_onboarding_state).
+        "onboarding_completed": onboarding_completed,
         "created_at": now_utc(),
         "deleted_at": None,
     }
+
+
+async def _issue_otp(email: str, name: Optional[str], preferred_language: Optional[str]) -> dict:
+    """Creates/refreshes the pending registration with a fresh OTP and emails it. Enforces the resend
+    cooldown and an absolute send cap; shared by request-otp and resend-otp so both are rate-limited
+    the same way (calling request-otp again is not a way around the resend cooldown)."""
+    email = email.lower()
+    existing = await db.pending_registrations.find_one({"email": email})
+    now = now_utc()
+    if existing:
+        last_sent = existing.get("last_otp_sent_at")
+        if last_sent and last_sent.tzinfo is None:
+            last_sent = last_sent.replace(tzinfo=timezone.utc)
+        if last_sent and (now - last_sent) < timedelta(seconds=OTP_RESEND_COOLDOWN_SECONDS):
+            wait = OTP_RESEND_COOLDOWN_SECONDS - int((now - last_sent).total_seconds())
+            raise _otp_error(429, "rate_limited", f"Please wait {max(wait, 1)}s before requesting another code")
+        if (existing.get("send_count") or 0) >= OTP_MAX_SENDS:
+            raise _otp_error(429, "rate_limited", "Too many codes requested for this email — try again later")
+
+    code = _generate_otp()
+    name = (name or (existing or {}).get("name") or "").strip()
+    preferred_language = preferred_language or (existing or {}).get("preferred_language")
+    await db.pending_registrations.update_one(
+        {"email": email},
+        {
+            "$set": {
+                "name": name,
+                "preferred_language": preferred_language if preferred_language in SUPPORTED_LANGUAGES else None,
+                "otp_hash": hash_pw(code),  # never store the plaintext code
+                "otp_expires_at": now + timedelta(minutes=OTP_TTL_MINUTES),
+                "otp_verified": False,
+                "attempt_count": 0,
+            },
+            "$setOnInsert": {"created_at": now},
+            "$currentDate": {"last_otp_sent_at": True},
+            "$inc": {"send_count": 1},
+        },
+        upsert=True,
+    )
+
+    provider = get_email_provider()
+    subject, html, text = otp_email_body(name or "there", code)
+    try:
+        await provider.send(to=email, subject=subject, html=html, text=text)
+    except EmailNotConfiguredError as e:
+        if not OTP_DEBUG_MODE:
+            raise HTTPException(status_code=503, detail=str(e))
+        logger.warning(f"OTP email not sent (no provider configured) — continuing because OTP_DEBUG_MODE is on")
+    except EmailSendError as e:
+        raise HTTPException(status_code=502, detail="Could not send the verification email — please try again") from e
+
+    result = {"ok": True, "expires_in_seconds": OTP_TTL_MINUTES * 60, "resend_after_seconds": OTP_RESEND_COOLDOWN_SECONDS}
+    if OTP_DEBUG_MODE:
+        result["debug_otp"] = code  # never included unless OTP_DEBUG_MODE is explicitly on
+    return result
+
+
+@api.post("/auth/register/request-otp")
+async def request_otp(body: RequestOtpBody):
+    # Handled the same way whether or not the email is taken, up to this one clear rejection — matches
+    # the existing plain /auth/login "Invalid email or password" precedent of not being fully silent.
+    existing_user = await db.users.find_one({"email": body.email.lower(), "deleted_at": None})
+    if existing_user:
+        raise _otp_error(409, "email_registered", "An account with this email already exists")
+    return await _issue_otp(body.email, body.name.strip(), body.preferred_language)
+
+
+@api.post("/auth/register/resend-otp")
+async def resend_otp(body: ResendOtpBody):
+    email = body.email.lower()
+    pending = await db.pending_registrations.find_one({"email": email})
+    if not pending:
+        raise _otp_error(400, "otp_expired", "Start registration again")
+    return await _issue_otp(email, None, None)
+
+
+@api.post("/auth/register/verify-otp")
+async def verify_otp(body: VerifyOtpBody):
+    email = body.email.lower()
+    pending = await db.pending_registrations.find_one({"email": email})
+    if not pending or not pending.get("otp_hash"):
+        raise _otp_error(400, "otp_expired", "Verification code expired — request a new one")
+    exp = pending.get("otp_expires_at")
+    if exp and exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if not exp or exp < now_utc():
+        raise _otp_error(400, "otp_expired", "Verification code expired — request a new one")
+    if (pending.get("attempt_count") or 0) >= OTP_MAX_ATTEMPTS:
+        raise _otp_error(429, "too_many_attempts", "Too many incorrect attempts — request a new code")
+    if not verify_pw(body.code.strip(), pending["otp_hash"]):
+        await db.pending_registrations.update_one({"email": email}, {"$inc": {"attempt_count": 1}})
+        raise _otp_error(400, "invalid_otp", "Incorrect verification code")
+
+    # One-time use: a fresh, server-issued token proves verification for the next step. The OTP hash
+    # is cleared so it can never be replayed even within its expiry window.
+    token = secrets.token_urlsafe(32)
+    await db.email_verifications.insert_one({"token": token, "email": email, "created_at": now_utc()})
+    await db.pending_registrations.update_one({"email": email}, {"$set": {"otp_hash": None, "otp_verified": True}})
+    return {"verification_token": token, "expires_in_seconds": EMAIL_VERIFICATION_TTL_MINUTES * 60}
+
+
+@api.post("/auth/register/complete")
+async def complete_registration(body: CompleteRegistrationBody):
+    email = body.email.lower()
+
+    # Validate everything BEFORE consuming the one-time token: a rejected password must never burn
+    # it, or a user who simply mistypes their password gets sent all the way back through OTP just to
+    # retry. bcrypt only uses the first 72 bytes and (v5+) refuses longer input, so check that too.
+    if len(body.password.encode()) > 72:
+        raise HTTPException(status_code=400, detail="Password is too long (maximum 72 bytes)")
+    violations = validate_password(body.password)
+    if violations:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Password does not meet requirements", "code": "weak_password", "violations": violations},
+        )
+
+    # Read-only check first — still valid? If not, no need to touch (or waste) the token at all.
+    rec = await db.email_verifications.find_one({"token": body.verification_token, "email": email})
+    if not rec or (now_utc() - rec["created_at"].replace(tzinfo=timezone.utc)) > timedelta(minutes=EMAIL_VERIFICATION_TTL_MINUTES):
+        raise _otp_error(401, "verification_expired", "Email verification expired — please verify again")
+
+    pending = await db.pending_registrations.find_one({"email": email})
+    if not pending or not pending.get("otp_verified"):
+        raise _otp_error(401, "verification_expired", "Email verification expired — please verify again")
+
+    # Re-check: another request could have completed registration for this email in between.
+    if await db.users.find_one({"email": email}):
+        raise _otp_error(409, "email_registered", "An account with this email already exists")
+
+    # Everything checks out — NOW consume the token atomically. Two concurrent completes racing here
+    # can never both win: only one find_one_and_delete call actually finds (and deletes) it.
+    rec = await db.email_verifications.find_one_and_delete({"token": body.verification_token, "email": email})
+    if not rec:
+        raise _otp_error(401, "verification_expired", "Email verification expired — please verify again")
+
+    user = _build_user_doc(
+        email, pending.get("name") or "", hash_pw(body.password), pending.get("preferred_language"), onboarding_completed=False
+    )
     await db.users.insert_one(user)
-    token = await create_session(uid)
+    await db.pending_registrations.delete_one({"email": email})
+    token = await create_session(user["user_id"])
     return {"session_token": token, "user": public_user(user, private=True)}
+
+
+if OTP_DEBUG_MODE:
+    # Test-only: mirrors the OLD instant-registration contract (email+password+name -> immediate
+    # account+session) so the existing test suite's fixtures keep working unchanged, without any
+    # OTP-bypass endpoint existing in a normal run — this route is simply absent (true 404) whenever
+    # OTP_DEBUG_MODE is off, which is every environment except an explicit local test run.
+    @api.post("/auth/register/dev-instant")
+    async def register_dev_instant(body: RegisterBody):
+        if len(body.password.encode()) > 72:
+            raise HTTPException(status_code=400, detail="Password is too long (maximum 72 bytes)")
+        if await db.users.find_one({"email": body.email.lower()}):
+            raise HTTPException(status_code=400, detail="Email already registered")
+        user = _build_user_doc(body.email, body.name, hash_pw(body.password), body.preferred_language, onboarding_completed=True)
+        await db.users.insert_one(user)
+        token = await create_session(user["user_id"])
+        return {"session_token": token, "user": public_user(user, private=True)}
 
 
 @api.post("/auth/login")
@@ -590,6 +828,10 @@ async def _google_user(claims: dict) -> Optional[dict]:
             "rating_count": 0,
             "swaps_count": 0,
             "preferred_language": None,
+            # First-time Google sign-up is also a first-time registration: same one-time welcome
+            # screen as email/password signup gets (this only sets the field on the brand-new account
+            # — the Google sign-in flow itself is unchanged).
+            "onboarding_completed": False,
             "created_at": now_utc(),
             "deleted_at": None,
         }
@@ -1500,6 +1742,13 @@ async def startup():
     await db.oauth_states.create_index("created_at", expireAfterSeconds=600)
     await db.google_logins.create_index("sid", unique=True)
     await db.google_logins.create_index("created_at", expireAfterSeconds=120)
+    # Registration OTP: pending registrations self-clean after a day of inactivity (a user who never
+    # finishes signing up); email verification tokens are single-use and expire fast either way, but
+    # the TTL index also clears any left stranded by a crash between verify-otp and complete.
+    await db.pending_registrations.create_index("email", unique=True)
+    await db.pending_registrations.create_index("created_at", expireAfterSeconds=86400)
+    await db.email_verifications.create_index("token", unique=True)
+    await db.email_verifications.create_index("created_at", expireAfterSeconds=EMAIL_VERIFICATION_TTL_MINUTES * 60)
     await db.books.create_index("owner_id")
     await db.swaps.create_index("requester_id")
     await db.swaps.create_index("receiver_id")
@@ -1508,6 +1757,7 @@ async def startup():
     try:
         await seed_demo()
         await backfill_seed_interests()
+        await backfill_onboarding_state()
     except Exception as e:
         logger.warning(f"Seed failed: {e}")
 
@@ -1542,6 +1792,14 @@ async def backfill_seed_interests():
             {"name": name, "seed": True, "reading_interests": {"$exists": False}},
             {"$set": {"reading_interests": interests}},
         )
+
+
+async def backfill_onboarding_state():
+    """Every account that existed before the welcome-screen feature shipped is marked already
+    onboarded, so no existing user is ever suddenly shown the new-user welcome screen."""
+    await db.users.update_many(
+        {"onboarding_completed": {"$exists": False}}, {"$set": {"onboarding_completed": True}}
+    )
 
 
 async def seed_demo():

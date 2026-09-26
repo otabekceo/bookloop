@@ -61,11 +61,11 @@ export function PersonCard({ person }: { person: Person }) {
         router.push(`/person/${person.user_id}`);
       }}
       style={{
-        backgroundColor: colors.surfaceSecondary,
+        backgroundColor: colors.glassFill,
         borderRadius: 20,
         padding: 16,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: colors.glassBorder,
         gap: 12,
       }}
     >
@@ -157,7 +157,7 @@ export function MatchCard({ person }: { person: Person }) {
       }}
       style={{
         width: 156,
-        backgroundColor: colors.surfaceSecondary,
+        backgroundColor: colors.glassFill,
         borderRadius: 18,
         padding: 14,
         borderWidth: 1,

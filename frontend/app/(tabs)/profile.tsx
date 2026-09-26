@@ -1,17 +1,18 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { View, ScrollView, Pressable, useWindowDimensions, Share } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import * as Clipboard from "expo-clipboard";
-import { MapPin, PencilSimple, SignOut, UserPlus, Copy, ShareNetwork, Sparkle, CaretRight, Translate } from "phosphor-react-native";
+import { MapPin, PencilSimple, SignOut, UserPlus, Copy, ShareNetwork, Sparkle, CaretRight, Translate, CircleHalf, Sun, Moon } from "phosphor-react-native";
 
 import { AppText, Avatar, Button, RatingPill, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
 import { BookTile, Book } from "@/src/components/cards";
 import { BadgeGrid } from "@/src/components/badges";
-import { useAuth } from "@/src/auth";
+import { useAuth, type User } from "@/src/auth";
 import { apiFetch } from "@/src/api";
+import { useAppearance } from "@/src/appearance";
 import { useLanguage, useLanguageMeta } from "@/src/i18n/LanguageProvider";
 import { makeStyles, useTheme } from "@/src/theme";
 
@@ -20,14 +21,19 @@ export default function Profile() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user, logout, refreshUser } = useAuth();
+  const { user, setUser, logout, refreshUser } = useAuth();
   const { t } = useLanguage();
   const meta = useLanguageMeta();
+  const { preference: appearancePreference } = useAppearance();
   const toast = useToast();
   const qc = useQueryClient();
   const { width } = useWindowDimensions();
   const col = (width - 40 - 14) / 2;
   const [saving, setSaving] = useState(false);
+  // A plain closure lock, not just `saving` state: `disabled={saving}` only takes effect after a
+  // React re-render, leaving a window where a rapid second tap fires before that lands. Same fix
+  // shape as the busy-lock in src/i18n/languageSwitch.ts for the identical class of problem.
+  const exchangingLock = useRef(false);
 
   const { data: booksData, refetch } = useQuery({
     queryKey: ["myBooks", "All"],
@@ -44,19 +50,26 @@ export default function Profile() {
   if (!user) return null;
   const books = (booksData?.books || []).slice(0, 4);
 
-  const toggleExchanging = async () => {    haptic("light");
+  const toggleExchanging = async () => {
+    if (exchangingLock.current) return; // rapid second tap: ignored, not queued
+    exchangingLock.current = true;
+    haptic("light");
+    const original = user.is_exchanging;
+    const next = !original;
+    setUser({ ...user, is_exchanging: next }); // immediate ON/OFF — don't wait on the network for this
     setSaving(true);
     try {
-      const next = !user.is_exchanging;
-      await apiFetch("/api/users/me", { method: "PUT", body: { is_exchanging: next } });
-      await refreshUser();
+      const data = await apiFetch<{ user: User }>("/api/users/me", { method: "PUT", body: { is_exchanging: next } });
+      setUser(data.user); // reconcile with the server's own response (no separate refetch needed)
       qc.invalidateQueries({ queryKey: ["people"] });
       qc.invalidateQueries({ queryKey: ["clusters"] });
       toast(next ? t("profile.nowExchanging") : t("profile.exchangingPaused"), "success");
     } catch {
-      toast(t("profile.couldNotUpdate"), "error");
+      setUser({ ...user, is_exchanging: original }); // revert the optimistic flip
+      toast(t("profile.couldNotUpdateExchangeStatus"), "error");
     } finally {
       setSaving(false);
+      exchangingLock.current = false;
     }
   };
 
@@ -266,7 +279,62 @@ export default function Profile() {
           <CaretRight size={18} color={colors.muted} weight="bold" />
         </DirectionalIcon>
       </Pressable>
+
+      {/* Appearance: the label opens the full System/Light/Dark picker (settings/appearance.tsx); the
+          switch on the right is the quick Light<->Dark flip. Siblings, not nested Pressables, so a
+          tap on the switch never also triggers the row's navigation. */}
+      <View style={[styles.langCard, { marginTop: 12 }]}>
+        <Pressable
+          testID="appearance-settings"
+          onPress={() => router.push("/settings/appearance")}
+          style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 14 }}
+        >
+          <View style={styles.langIcon}>
+            <CircleHalf size={22} color={colors.onBrandPrimary} weight="fill" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <AppText variant="heading">{t("appearance.title")}</AppText>
+            <AppText variant="caption" color={colors.muted}>
+              {t(`appearance.${appearancePreference}`)}
+            </AppText>
+          </View>
+        </Pressable>
+        <QuickAppearanceToggle />
+      </View>
     </ScrollView>
+  );
+}
+
+/**
+ * Sun/switch/moon quick toggle: Light<->Dark only (the full System option lives in the Appearance
+ * settings screen this row's label opens). Reuses the exact switch/knob styling the "Currently
+ * exchanging" toggle above already uses — no separate visual language. Purely a re-render, same as
+ * the full settings screen: no reload, applies instantly.
+ */
+function QuickAppearanceToggle() {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const { t } = useLanguage();
+  const { resolvedScheme, setPreference } = useAppearance();
+  const isDark = resolvedScheme === "dark";
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+      <Sun size={16} color={isDark ? colors.muted : colors.brandPrimary} weight={isDark ? "regular" : "fill"} />
+      <Pressable
+        testID="quick-appearance-toggle"
+        accessibilityRole="switch"
+        accessibilityState={{ checked: isDark }}
+        accessibilityLabel={t("appearance.title")}
+        onPress={() => {
+          haptic("selection");
+          setPreference(isDark ? "light" : "dark");
+        }}
+        style={[styles.switch, isDark && styles.switchOn]}
+      >
+        <View style={[styles.knob, isDark && styles.knobOn]} />
+      </Pressable>
+      <Moon size={16} color={isDark ? colors.brandPrimary : colors.muted} weight={isDark ? "fill" : "regular"} />
+    </View>
   );
 }
 

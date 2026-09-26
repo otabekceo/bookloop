@@ -139,6 +139,10 @@ export function AppText({
 // ---------------------------------------------------------------------------
 // Button
 // ---------------------------------------------------------------------------
+// PRIMARY: terracotta, used selectively for the one important action on a screen. SECONDARY: dark
+// translucent glass with a thin border — the default for a second action alongside a primary one.
+// OUTLINE: the same glass treatment, border-forward (Google sign-in, permission prompts). GHOST:
+// text/icon only, minimal background, for tertiary actions.
 export function Button({
   title,
   onPress,
@@ -162,17 +166,11 @@ export function Button({
   const bg =
     variant === "primary"
       ? colors.brandPrimary
-      : variant === "secondary"
-        ? colors.brandSecondary
-        : variant === "outline"
-          ? "transparent"
-          : "transparent";
-  const fg =
-    variant === "primary"
-      ? colors.onBrandPrimary
-      : variant === "secondary"
-        ? colors.onBrandSecondary
-        : colors.brandPrimary;
+      : variant === "secondary" || variant === "outline"
+        ? colors.glassFill
+        : "transparent";
+  const fg = variant === "primary" ? colors.onBrandPrimary : variant === "ghost" ? colors.brandPrimary : colors.onSurface;
+  const borderColor = variant === "outline" ? colors.borderStrong : colors.glassBorder;
   return (
     <Pressable
       testID={testID}
@@ -184,9 +182,9 @@ export function Button({
       style={({ pressed }) => [
         {
           backgroundColor: bg,
-          borderWidth: variant === "outline" ? 1.5 : 0,
-          borderColor: colors.brandPrimary,
-          borderRadius: 14,
+          borderWidth: variant === "secondary" || variant === "outline" ? 1 : 0,
+          borderColor,
+          borderRadius: 16,
           height: 52,
           alignItems: "center",
           justifyContent: "center",
@@ -194,6 +192,13 @@ export function Button({
           gap: 8,
           opacity: disabled ? 0.5 : pressed ? 0.85 : 1,
           paddingHorizontal: 20,
+        },
+        variant === "primary" && {
+          shadowColor: colors.brand,
+          shadowOpacity: 0.3,
+          shadowRadius: 10,
+          shadowOffset: { width: 0, height: 4 },
+          elevation: 4,
         },
         style,
       ]}
@@ -246,13 +251,13 @@ export function Chip({
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
-        backgroundColor: selected ? colors.surfaceInverse : colors.surfaceSecondary,
+        backgroundColor: selected ? colors.brandTertiary : colors.glassFill,
         borderWidth: 1,
-        borderColor: selected ? colors.surfaceInverse : colors.border,
+        borderColor: selected ? colors.brand : colors.glassBorder,
       }}
     >
       {leading}
-      <AppText variant="label" color={selected ? colors.onSurfaceInverse : colors.onSurfaceSecondary}>
+      <AppText variant="label" color={selected ? colors.onBrandTertiary : colors.onSurface}>
         {label}
       </AppText>
     </Pressable>
@@ -323,7 +328,7 @@ export function Stars({ value, size = 14 }: { value: number; size?: number }) {
         <Star
           key={i}
           size={size}
-          color={colors.star}
+          color={colors.rating}
           weight={i <= Math.round(value) ? "fill" : "regular"}
         />
       ))}
@@ -336,7 +341,7 @@ export function RatingPill({ rating, count }: { rating: number; count?: number }
   const { t } = useLanguage();
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-      <Star size={13} color={colors.star} weight="fill" />
+      <Star size={13} color={colors.rating} weight="fill" />
       <AppText variant="label" color={colors.onSurface}>
         {rating > 0 ? rating.toFixed(1) : t("common.new")}
         {count ? ` (${count})` : ""}
@@ -556,12 +561,24 @@ import { TextInput, TextInputProps } from "react-native";
 export function Field({
   label,
   style,
-  onSurface,
+  // Accepted for backward compatibility with existing call sites; every field is a uniform glass
+  // surface now (the point of glass is that it reads consistently over whatever is behind it), so
+  // this no longer changes anything.
+  onSurface: _onSurface,
+  onFocus,
+  onBlur,
+  /** e.g. a show/hide-password eye icon. Rendered over the trailing (logical "end") edge of the
+   * INPUT itself, vertically centered on it — not the label — and correctly mirrored under RTL. */
+  rightElement,
+  testID,
   ...rest
-}: TextInputProps & { label?: string; onSurface?: boolean }) {
+}: TextInputProps & { label?: string; onSurface?: boolean; rightElement?: React.ReactNode }) {
   const { colors } = useTheme();
   const { language, isRTL } = useLanguage();
   const fonts = fontsForLanguage(language);
+  // Glass input: a translucent fill + thin border that brightens to the brand color on focus —
+  // the "soft focus state" from the design system, not a hard color swap.
+  const [focused, setFocused] = useState(false);
   return (
     <View style={{ gap: 6 }}>
       {label && (
@@ -569,26 +586,46 @@ export function Field({
           {label}
         </AppText>
       )}
-      <TextInput
-        placeholderTextColor={colors.muted}
-        {...rest}
-        style={[
-          {
-            backgroundColor: onSurface ? colors.surfaceTertiary : colors.surfaceSecondary,
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: colors.border,
-            paddingHorizontal: 14,
-            paddingVertical: 14,
-            fontFamily: fonts.regular,
-            fontSize: 15,
-            color: colors.onSurface,
-            textAlign: isRTL ? "right" : "left",
-            writingDirection: isRTL ? "rtl" : "ltr",
-          },
-          style,
-        ]}
-      />
+      <View style={{ position: "relative", justifyContent: "center" }}>
+        <TextInput
+          placeholderTextColor={colors.muted}
+          {...rest}
+          testID={testID}
+          onFocus={(e) => {
+            setFocused(true);
+            onFocus?.(e);
+          }}
+          onBlur={(e) => {
+            setFocused(false);
+            onBlur?.(e);
+          }}
+          style={[
+            {
+              backgroundColor: colors.glassFill,
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: focused ? colors.brand : colors.glassBorder,
+              paddingHorizontal: 14,
+              paddingVertical: 14,
+              fontFamily: fonts.regular,
+              fontSize: 15,
+              color: colors.onSurface,
+              textAlign: isRTL ? "right" : "left",
+              writingDirection: isRTL ? "rtl" : "ltr",
+            },
+            rightElement ? (isRTL ? { paddingLeft: 44 } : { paddingRight: 44 }) : undefined,
+            style,
+          ]}
+        />
+        {rightElement && (
+          <View
+            testID={testID ? `${testID}-right-element` : undefined}
+            style={[{ position: "absolute", top: 0, bottom: 0, width: 44, alignItems: "center", justifyContent: "center" }, isRTL ? { left: 2 } : { right: 2 }]}
+          >
+            {rightElement}
+          </View>
+        )}
+      </View>
     </View>
   );
 }

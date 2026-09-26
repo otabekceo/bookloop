@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { View, Pressable, ImageBackground } from "react-native";
+import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,11 +17,20 @@ import { fontsForLanguage } from "@/src/typography";
 const AUTH_BG =
   "https://images.unsplash.com/photo-1518373714866-3f1478910cc0?crop=entropy&cs=srgb&fm=jpg&w=1200&q=80";
 
+// A light sanity check, not full RFC 5322 validation — the backend's EmailStr does the rigorous
+// check regardless. This only exists to catch an obvious typo before it becomes a raw, unfriendly
+// 422 from the server.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function isLikelyEmail(value: string): boolean {
+  return EMAIL_RE.test(value);
+}
+
 export default function Login() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { login, register, loginWithGoogle, googleError, clearGoogleError } = useAuth();
+  const router = useRouter();
+  const { login, requestOtp, loginWithGoogle, googleError, clearGoogleError } = useAuth();
   const { t, language: uiLanguage } = useLanguage();
   const uiFonts = fontsForLanguage(uiLanguage);
   const toast = useToast();
@@ -51,17 +61,34 @@ export default function Login() {
   }, [googleError, clearGoogleError, toast, t]);
 
   const submit = async () => {
-    if (!email.trim() || !password.trim() || (mode === "register" && !name.trim())) {
+    // Sign up is step 1 of 3 (Account -> Verify -> Password): only name + email are collected here.
+    const missingField = mode === "login" ? !email.trim() || !password.trim() : !email.trim() || !name.trim();
+    if (missingField) {
       toast(t("auth.fillAllFields"), "error");
+      return;
+    }
+    // A typo here otherwise sails past this "non-empty" check and hits the backend's strict EmailStr
+    // validation raw (a 422 our generic error handling can't turn into anything friendly) — catch it
+    // client-side first with a translated message instead.
+    if (!isLikelyEmail(email.trim())) {
+      toast(t("validation.invalidEmail"), "error");
       return;
     }
     setLoading(true);
     try {
-      if (mode === "login") await login(email.trim(), password);
-      else await register(email.trim(), password, name.trim());
-      haptic("success");
+      if (mode === "login") {
+        await login(email.trim(), password);
+        haptic("success");
+      } else {
+        const result = await requestOtp(name.trim(), email.trim());
+        haptic("success");
+        router.push({
+          pathname: "/(auth)/verify-otp",
+          params: { email: email.trim(), resendAfter: String(result.resend_after_seconds) },
+        });
+      }
     } catch (e: any) {
-      toast(e.message || t("auth.somethingWentWrong"), "error");
+      toast(e.code === "email_registered" ? t("auth.emailAlreadyRegistered") : e.message || t("auth.somethingWentWrong"), "error");
     } finally {
       setLoading(false);
     }
@@ -129,20 +156,22 @@ export default function Login() {
               onChangeText={setEmail}
               onSurface
             />
-            <Field
-              testID="password-input"
-              label={t("auth.password")}
-              placeholder="••••••••"
-              secureTextEntry
-              value={password}
-              onChangeText={setPassword}
-              onSurface
-            />
+            {mode === "login" && (
+              <Field
+                testID="password-input"
+                label={t("auth.password")}
+                placeholder="••••••••"
+                secureTextEntry
+                value={password}
+                onChangeText={setPassword}
+                onSurface
+              />
+            )}
           </View>
 
           <Button
             testID="auth-submit-button"
-            title={mode === "login" ? t("auth.signIn") : t("auth.createAccount")}
+            title={mode === "login" ? t("auth.signIn") : t("auth.continue")}
             onPress={submit}
             loading={loading}
             style={{ marginTop: 18 }}

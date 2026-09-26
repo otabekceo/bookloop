@@ -34,9 +34,16 @@ export async function clearToken() {
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /**
+   * Stable machine-readable error identifier (e.g. "invalid_otp", "otp_expired", "rate_limited"),
+   * present on endpoints designed for translated error messages. `message` (the English text) is
+   * always sent too, as a fallback for any code the frontend doesn't recognize.
+   */
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -72,13 +79,26 @@ export async function apiFetch<T = any>(path: string, opts: Options = {}): Promi
   if (res.status === 401 && token) onUnauthorized?.(token);
   if (!res.ok) {
     let msg = `Request failed (${res.status})`;
+    let code: string | undefined;
     try {
       const data = await res.json();
-      msg = data.detail || msg;
+      // Most endpoints send a plain string `detail`. A few (OTP/registration) send a structured
+      // { message, code } so the frontend can show a translated message via `code`. A 422 that
+      // reaches the server raw (a request body FastAPI's own Pydantic validation rejected, e.g. a
+      // malformed email that slipped past client-side checks) sends `detail` as an ARRAY of
+      // validation errors instead — arrays are also `typeof "object"`, so this must be checked
+      // before the generic-object branch below or it silently falls through to the flat fallback.
+      if (typeof data.detail === "string") msg = data.detail;
+      else if (Array.isArray(data.detail) && data.detail[0]?.msg) {
+        msg = data.detail[0].msg;
+      } else if (data.detail && typeof data.detail === "object") {
+        msg = data.detail.message || msg;
+        code = data.detail.code;
+      }
     } catch {
       // ignore
     }
-    throw new ApiError(msg, res.status);
+    throw new ApiError(msg, res.status, code);
   }
   const ct = res.headers.get("content-type") || "";
   return (ct.includes("json") ? res.json() : res.text()) as Promise<T>;

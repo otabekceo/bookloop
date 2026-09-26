@@ -34,10 +34,20 @@ must allow inbound connections to Python (8001) and Node (8081).
 Optional. Without `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` the Google button is hidden. Setup steps are
 in `backend/.env.example`; Google requires an https redirect address, so a phone needs an https tunnel.
 
+### Registration email (OTP)
+Real email/password sign-up sends a 6-digit code via Resend. Without `RESEND_API_KEY` set,
+`/api/auth/register/request-otp` fails clearly telling you what to configure — see `backend/.env.example`.
+
 ## Tests
+Needs a backend started with `OTP_DEBUG_MODE=true` (see `backend/.env.example`) — most fixtures use
+the gated `/auth/register/dev-instant` route for a fast, no-email account, and the OTP tests read the
+code back via the `debug_otp` field instead of a real inbox. **Never** run with this flag on a backend
+reachable from the internet.
 ```powershell
 cd backend
 $env:EXPO_PUBLIC_BACKEND_URL = "http://127.0.0.1:8001"   # use 127.0.0.1, not localhost (much faster on Windows)
-python -m pytest tests -n 0
+$env:OTP_DEBUG_MODE = "true"
+python -m uvicorn server:app --port 8001   # in one terminal
+python -m pytest tests -n 0                # in another
 ```
 The tests create users and books, so point them at a throwaway database (`DB_NAME=bookloop_test`).

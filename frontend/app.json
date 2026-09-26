@@ -33,10 +33,10 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-image.png",
-          "imageWidth": 200,
+          "image": "./assets/images/bookloop-logo.png",
+          "imageWidth": 220,
           "resizeMode": "contain",
-          "backgroundColor": "#17211F"
+          "backgroundColor": "#F7F4EE"
         }
       ],
       [
