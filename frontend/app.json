@@ -21,7 +21,10 @@
         "backgroundColor": "#F7F4EE"
       },
       "package": "com.otabekceo.bookloop",
-      "permissions": ["READ_MEDIA_IMAGES", "CAMERA"]
+      "permissions": [
+        "READ_MEDIA_IMAGES",
+        "CAMERA"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -55,7 +58,8 @@
       "expo-image",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-localization"
     ],
     "experiments": {
       "typedRoutes": true
