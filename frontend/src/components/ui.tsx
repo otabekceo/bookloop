@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  ImageStyle,
   Pressable,
   ScrollView,
   StyleProp,
@@ -391,7 +392,7 @@ export function BookCover({
     return (
       <Image
         source={{ uri: src }}
-        style={[{ width, height, borderRadius: 8, backgroundColor: "#00000010" }, style]}
+        style={[{ width, height, borderRadius: 8, backgroundColor: "#00000010" }, style as StyleProp<ImageStyle>]}
         contentFit="cover"
         transition={200}
         onError={() => setFailed(true)}

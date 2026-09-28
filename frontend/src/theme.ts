@@ -129,12 +129,14 @@ export const themes: { light: ThemeColors; dark: ThemeColors } = { light, dark }
 /** Forces the native-reported color scheme (`null` releases the override and lets it track the OS
  * live). Only src/appearance.tsx should call this — see AppearanceProvider for why. */
 export function setColorScheme(scheme: ColorScheme | null) {
-  Appearance.setColorScheme?.(scheme);
+  // React Native 0.86 releases the override with "unspecified" (null is no longer the reset value).
+  Appearance.setColorScheme?.(scheme ?? "unspecified");
 }
 
 export function useTheme(): { scheme: ColorScheme; colors: ThemeColors } {
   const system = useColorScheme();
-  const scheme: ColorScheme = system && themes[system] ? system : defaultScheme;
+  // useColorScheme() can also report "unspecified" (or null) — both mean "use the default theme".
+  const scheme: ColorScheme = system === "light" || system === "dark" ? system : defaultScheme;
   return { scheme, colors: themes[scheme] };
 }
 

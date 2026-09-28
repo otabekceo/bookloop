@@ -109,7 +109,7 @@ function RootNavigator() {
       // until it's done. Welcome's own CTA is what navigates away once completeOnboarding() resolves
       // — this effect only ever pushes them IN, never fights that explicit exit.
       if (!onWelcomeScreen) router.replace("/welcome");
-    } else if (status === "authed" && (inAuth || segments.length === 0)) {
+    } else if (status === "authed" && (inAuth || (segments as string[]).length === 0)) {
       router.replace("/(tabs)/discover");
     }
   }, [status, user, isReady, needsSelection, segments, router]);

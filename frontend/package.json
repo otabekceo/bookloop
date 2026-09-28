@@ -9,7 +9,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "i18n:check": "node scripts/i18n-audit.js"
+    "i18n:check": "node scripts/i18n-audit.js",
+    "test": "node --test scripts/logic.test.mjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~57.0.16",
