@@ -1562,3 +1562,239 @@ class TestSearchAndUpload:
     def test_upload_requires_auth(self):
         files = {"file": ("x.png", io.BytesIO(b"\x89PNG\r\n\x1a\n"), "image/png")}
         assert requests.post(f"{API}/upload", files=files).status_code == 401
+
+
+# ------------------------------------------------------------------ LOCATION (device-reported only)
+TASHKENT = {"lat": 41.3111, "lng": 69.2797}
+
+
+def _set_location(u, **body):
+    return requests.put(f"{API}/users/me/location", json=body, headers=_h(u["token"]))
+
+
+class TestLocation:
+    def test_new_account_has_no_made_up_location(self):
+        u = _new_user("Loc")
+        me = requests.get(f"{API}/auth/me", headers=_h(u["token"])).json()["user"]
+        assert me["lat"] is None and me["lng"] is None
+        assert me["city"] is None and me["neighborhood"] is None
+        assert me["location_updated_at"] is None
+
+    def test_device_location_is_stored_with_area(self):
+        u = _new_user("Loc")
+        r = _set_location(u, **TASHKENT, city="Tashkent", neighborhood="Yunusobod", country="Uzbekistan")
+        assert r.status_code == 200, r.text
+        me = requests.get(f"{API}/auth/me", headers=_h(u["token"])).json()["user"]
+        assert me["city"] == "Tashkent" and me["neighborhood"] == "Yunusobod"
+        assert abs(me["lat"] - TASHKENT["lat"]) < 1e-3 and abs(me["lng"] - TASHKENT["lng"]) < 1e-3
+        assert me["location_updated_at"]
+
+    def test_city_fallback_when_no_neighborhood(self):
+        u = _new_user("Loc")
+        me = _set_location(u, **TASHKENT, city="Tashkent", neighborhood="Tashkent").json()["user"]
+        assert me["city"] == "Tashkent" and me["neighborhood"] is None
+
+    def test_invalid_coordinates_rejected(self):
+        u = _new_user("Loc")
+        assert _set_location(u, lat=95, lng=10).status_code == 422
+        assert _set_location(u, lat=10, lng=200).status_code == 422
+
+    def test_profile_update_cannot_set_location(self):
+        u = _new_user("Loc")
+        r = requests.put(f"{API}/users/me", json={"bio": "hi", "neighborhood": "Centro", "city": "Messina",
+                                                   "lat": 38.1938, "lng": 15.554}, headers=_h(u["token"]))
+        assert r.status_code == 200
+        me = r.json()["user"]
+        assert me["bio"] == "hi"
+        assert me["city"] is None and me["neighborhood"] is None and me["lat"] is None
+
+    def test_close_readers_are_reported_as_within_100m_only(self):
+        a, b = _new_user("Near A"), _new_user("Near B")
+        _set_location(a, **TASHKENT, city="Tashkent")
+        _set_location(b, lat=TASHKENT["lat"] + 0.0002, lng=TASHKENT["lng"], city="Tashkent")  # ~22 m apart
+        u = requests.get(f"{API}/users/{b['id']}", headers=_h(a["token"])).json()["user"]
+        assert u["distance_km"] == 0.1
+        assert "lat" not in u and "lng" not in u
+        people = requests.get(f"{API}/discover/people?search=Near%20B", headers=_h(a["token"])).json()["people"]
+        match = [p for p in people if p["user_id"] == b["id"]]
+        assert match and match[0]["distance_km"] == 0.1
+
+    def test_unknown_location_distance_is_sentinel(self):
+        a, b = _new_user("Loc A"), _new_user("Loc B")
+        _set_location(a, **TASHKENT, city="Tashkent")
+        u = requests.get(f"{API}/users/{b['id']}", headers=_h(a["token"])).json()["user"]
+        assert u["distance_km"] == 999.0 and u["neighborhood"] is None and u["city"] is None
+
+    def test_map_clusters_use_real_areas_without_exact_coordinates(self):
+        a = _new_user("Map")
+        _set_location(a, lat=41.31234, lng=69.28765, city="Tashkent", neighborhood="Chilonzor")
+        d = requests.get(f"{API}/map/clusters", headers=_h(a["token"])).json()
+        chil = [c for c in d["clusters"] if c["neighborhood"] == "Chilonzor" and c["city"] == "Tashkent"]
+        assert chil and chil[0]["id"]
+        # Centers are rounded to ~1 km, never a reader's exact stored position.
+        assert round(chil[0]["lat"], 2) == chil[0]["lat"] and round(chil[0]["lng"], 2) == chil[0]["lng"]
+        assert all(c["neighborhood"] for c in d["clusters"])
+
+
+# ------------------------------------------------------------------ DEMO COMMUNITY CONSISTENCY
+DEMO_NAMES = {"Maria Rossi", "Luca Bianchi", "Laura Conti", "Ahmed Hassan", "Giulia Marino", "Marco De Luca",
+              "Sofia Greco", "Antonio Ferrara", "Elena Russo", "Davide Romano"}
+
+
+class TestDemoCommunity:
+    @pytest.fixture(scope="class")
+    def demo_people(self):
+        u = _new_user("Demo")
+        # Looked up by name: a throwaway test database can hold thousands of other readers.
+        demo = []
+        for name in DEMO_NAMES:
+            people = requests.get(f"{API}/discover/people", params={"search": name}, headers=_h(u["token"])).json()["people"]
+            demo += [p for p in people if p["name"] == name]
+        return u, demo
+
+    def test_exactly_ten_demo_readers(self, demo_people):
+        _, demo = demo_people
+        assert sorted(p["name"] for p in demo) == sorted(DEMO_NAMES)
+
+    def test_reviews_never_exceed_completed_swaps(self, demo_people):
+        _, demo = demo_people
+        for p in demo:
+            assert p["rating_count"] <= p["swaps_count"], p["name"]
+
+    def test_review_counts_are_backed_by_demo_reviews(self, demo_people):
+        u, demo = demo_people
+        assert any(p["rating_count"] > 0 for p in demo)
+        for p in demo:
+            d = requests.get(f"{API}/users/{p['user_id']}", headers=_h(u["token"])).json()
+            assert len(d["reviews"]) == p["rating_count"], p["name"]
+            assert all(r["rater_name"] in DEMO_NAMES and r["review"] for r in d["reviews"])
+            if d["reviews"]:
+                avg = round(sum(r["stars"] for r in d["reviews"]) / len(d["reviews"]), 1)
+                assert p["rating"] == avg
+
+
+# ------------------------------------------------------------------ SWAP LISTS: ONE BUCKET PER SWAP
+def _buckets(u):
+    r = requests.get(f"{API}/swaps", headers=_h(u["token"]))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _where(u, sid):
+    """Every bucket this swap id appears in, for this user (must always be exactly one)."""
+    b = _buckets(u)
+    return [name for name, rows in b.items() for row in rows if row["id"] == sid]
+
+
+def _proposed_swap():
+    a, b = _new_user("Life A"), _new_user("Life B")
+    ba, bb = _new_book(a, "Life A book"), _new_book(b, "Life B book")
+    sid = requests.post(f"{API}/swaps", json={"receiver_id": b["id"]}, headers=_h(a["token"])).json()["swap"]["id"]
+    r = _swap(a, "/propose", sid, {"offered_book_id": ba, "requested_book_id": bb})
+    assert r.status_code == 200, r.text
+    return a, b, sid, ba, bb
+
+
+class TestSwapLifecycleBuckets:
+    def test_pending_active_completed_each_in_exactly_one_bucket(self):
+        a, b, sid, _, _ = _proposed_swap()
+        assert _where(a, sid) == ["outgoing"] and _where(b, sid) == ["incoming"]
+        assert _swap(b, "/accept", sid).status_code == 200
+        assert _where(a, sid) == ["active"] and _where(b, sid) == ["active"]
+        assert _swap(a, "/complete", sid).status_code == 200
+        assert _where(a, sid) == ["active"] and _where(b, sid) == ["active"]  # half-confirmed stays active
+        assert _swap(b, "/complete", sid).status_code == 200
+        assert _where(a, sid) == ["completed"] and _where(b, sid) == ["completed"]
+        n = requests.get(f"{API}/notifications", headers=_h(b["token"])).json()
+        assert n["active_swaps"] == 0
+
+    def test_declined_and_cancelled_go_to_history_only(self):
+        a, b, sid, _, _ = _proposed_swap()
+        assert _swap(b, "/decline", sid).status_code == 200
+        assert _where(a, sid) == ["completed"] and _where(b, sid) == ["completed"]
+        a2, b2, sid2, _, _ = _proposed_swap()
+        assert _swap(a2, "/cancel", sid2).status_code == 200
+        assert _where(a2, sid2) == ["completed"] and _where(b2, sid2) == ["completed"]
+        row = next(r for r in _buckets(a2)["completed"] if r["id"] == sid2)
+        assert row["status"] == "cancelled" and row["other_user"]["user_id"] == b2["id"]
+
+    def test_swaps_with_reports_open_and_latest(self):
+        a, b, sid, _, _ = _proposed_swap()
+        w = requests.get(f"{API}/swaps/with/{b['id']}", headers=_h(a["token"])).json()
+        assert w["open"]["id"] == sid and w["latest"]["id"] == sid
+        _swap(b, "/accept", sid)
+        _swap(a, "/complete", sid)
+        _swap(b, "/complete", sid)
+        w = requests.get(f"{API}/swaps/with/{b['id']}", headers=_h(a["token"])).json()
+        assert w["open"] is None and w["latest"]["id"] == sid and w["latest"]["status"] == "completed"
+        # The other side sees the same pair.
+        w_b = requests.get(f"{API}/swaps/with/{a['id']}", headers=_h(b["token"])).json()
+        assert w_b["open"] is None and w_b["latest"]["id"] == sid
+
+
+# ------------------------------------------------------------------ EXCHANGE CHAT: PROPOSAL BOOKS
+class TestProposalBooksInChat:
+    def test_both_sides_see_both_titles(self):
+        a, b, sid, ba, bb = _proposed_swap()
+        for u in (a, b):
+            d = requests.get(f"{API}/swaps/{sid}", headers=_h(u["token"])).json()
+            prop = next(m for m in d["messages"] if m["type"] == "proposal")["proposal"]
+            assert prop["offered"]["title"] == "TEST Life A book"
+            assert prop["requested"]["title"] == "TEST Life B book"
+            ap = d["swap"]["active_proposal"]
+            assert ap["offered"]["id"] == ba and ap["requested"]["id"] == bb
+
+    def test_missing_book_resolves_to_null_not_error(self):
+        a, b, sid, ba, _ = _proposed_swap()
+        _otp_db().books.delete_one({"id": ba})  # a book gone for good (not a soft delete)
+        d = requests.get(f"{API}/swaps/{sid}", headers=_h(b["token"])).json()
+        prop = next(m for m in d["messages"] if m["type"] == "proposal")["proposal"]
+        assert prop["offered"] is None and prop["requested"]["title"] == "TEST Life B book"
+
+
+# ------------------------------------------------------------------ MESSAGING: IDEMPOTENT + INCREMENTAL
+class TestMessaging:
+    def test_client_id_makes_resend_idempotent(self):
+        a, b, sid, _, _ = _proposed_swap()
+        body = {"text": "hello once", "client_id": "c_test_" + uuid.uuid4().hex[:8]}
+        first = _swap(a, "/messages", sid, body).json()["message"]
+        again = _swap(a, "/messages", sid, body).json()
+        assert again["duplicate"] is True and again["message"]["id"] == first["id"]
+        msgs = requests.get(f"{API}/swaps/{sid}", headers=_h(b["token"])).json()["messages"]
+        assert sum(1 for m in msgs if m.get("text") == "hello once") == 1
+
+    def test_same_client_id_from_another_user_is_a_different_message(self):
+        a, b, sid, _, _ = _proposed_swap()
+        cid = "c_shared_" + uuid.uuid4().hex[:8]
+        m1 = _swap(a, "/messages", sid, {"text": "from a", "client_id": cid}).json()["message"]
+        m2 = _swap(b, "/messages", sid, {"text": "from b", "client_id": cid}).json()["message"]
+        assert m1["id"] != m2["id"]
+
+    def test_incremental_poll_returns_only_newer_messages_in_order(self):
+        a, b, sid, _, _ = _proposed_swap()
+        full = requests.get(f"{API}/swaps/{sid}", headers=_h(b["token"])).json()
+        assert full["full"] is True and "my_books" in full
+        anchor = full["messages"][-1]["id"]
+        sent = [_swap(a, "/messages", sid, {"text": f"m{i}"}).json()["message"]["id"] for i in range(3)]
+        inc = requests.get(f"{API}/swaps/{sid}", params={"after": anchor}, headers=_h(b["token"])).json()
+        assert inc["full"] is False and "my_books" not in inc
+        ids = [m["id"] for m in inc["messages"]]
+        assert [i for i in ids if i != anchor] == sent  # new ones, in send order (anchor may repeat)
+        # An unknown anchor falls back to the full conversation instead of losing messages.
+        again = requests.get(f"{API}/swaps/{sid}", params={"after": "msg_nope"}, headers=_h(b["token"])).json()
+        assert again["full"] is True and len(again["messages"]) >= len(full["messages"]) + 3
+
+    def test_other_users_cannot_read_or_post(self):
+        a, b, sid, _, _ = _proposed_swap()
+        c = _new_user("Outsider")
+        assert requests.get(f"{API}/swaps/{sid}", headers=_h(c["token"])).status_code == 404
+        assert _swap(c, "/messages", sid, {"text": "x", "client_id": "c1"}).status_code == 404
+
+
+class TestRussianPreference:
+    def test_russian_is_accepted_and_persists(self):
+        u = _new_user("Ru")
+        r = requests.put(f"{API}/users/me", json={"preferred_language": "ru"}, headers=_h(u["token"]))
+        assert r.status_code == 200 and r.json()["user"]["preferred_language"] == "ru"
+        # A fresh read (what the app does on the next launch) still says Russian.
+        assert requests.get(f"{API}/auth/me", headers=_h(u["token"])).json()["user"]["preferred_language"] == "ru"

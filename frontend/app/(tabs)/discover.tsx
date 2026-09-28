@@ -1,6 +1,6 @@
-import { useRef, useState, useMemo, useCallback } from "react";
-import { View, FlatList, ScrollView, useWindowDimensions, Pressable, RefreshControl, ActivityIndicator } from "react-native";
-import { useRouter } from "expo-router";
+import { useRef, useState, useMemo, useCallback, useEffect } from "react";
+import { View, FlatList, ScrollView, useWindowDimensions, Pressable, RefreshControl, ActivityIndicator, Keyboard } from "react-native";
+import { useRouter, useNavigation } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from "@gorhom/bottom-sheet";
@@ -9,10 +9,13 @@ import { MagnifyingGlass, SlidersHorizontal, Bell, BookOpen, Sparkle, ArrowRight
 import { AppText, Chip, ChipRow, Field, Button, EmptyState, DirectionalIcon, haptic, useDirectionalStyle } from "@/src/components/ui";
 import { Logo } from "@/src/components/Logo";
 import { PersonCard, MatchCard, BookTile, Person, Book } from "@/src/components/cards";
+import { LocationPrompt } from "@/src/components/LocationPrompt";
 import { apiFetch } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useDeviceLocation } from "@/src/location";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { GENRES, LANGUAGES, DISTANCES } from "@/src/constants";
+import { enumLabel } from "@/src/i18n/enums";
 import { makeStyles, useTheme } from "@/src/theme";
 import { fontsForLanguage } from "@/src/typography";
 
@@ -22,6 +25,7 @@ export default function Discover() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
+  const location = useDeviceLocation();
   const { t, language: uiLanguage } = useLanguage();
   const uiFonts = fontsForLanguage(uiLanguage);
   const { width } = useWindowDimensions();
@@ -39,6 +43,29 @@ export default function Discover() {
   const [exchangingOnly, setExchangingOnly] = useState(true);
 
   const sheetRef = useRef<BottomSheet>(null);
+  const peopleListRef = useRef<FlatList>(null);
+  const booksListRef = useRef<FlatList>(null);
+  const navigation = useNavigation();
+
+  // Tapping the Discover tab while already on Discover returns to the main Discover view: clears the
+  // search and filters, closes the filter sheet and keyboard, and scrolls back to the top. This is
+  // screen state, not navigation history, so nothing is pushed or stacked.
+  useEffect(() => {
+    const unsubscribe = navigation.addListener("tabPress" as any, () => {
+      if (!navigation.isFocused()) return;
+      Keyboard.dismiss();
+      sheetRef.current?.close();
+      setSearch("");
+      setGenre("All");
+      setLanguage("All");
+      setMaxDistance(25);
+      setExchangingOnly(true);
+      setTab("people");
+      peopleListRef.current?.scrollToOffset({ offset: 0, animated: true });
+      booksListRef.current?.scrollToOffset({ offset: 0, animated: true });
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   const { data: notif } = useQuery({
     queryKey: ["notifications"],
@@ -79,6 +106,17 @@ export default function Discover() {
   const topMatches = peopleQ.data?.top_matches || [];
   const showMatches = !search && genre === "All";
   const hasGenres = (user?.genres?.length || 0) > 0;
+
+  // Distances need the reader's own location. No prompt on open: the card asks only when tapped.
+  const LocationBanner = !location.hasLocation ? (
+    <LocationPrompt
+      state={location.state}
+      onRequest={location.request}
+      onOpenSettings={location.openSettings}
+      style={{ marginBottom: 14 }}
+      testID="discover-location-prompt"
+    />
+  ) : null;
 
   const MatchesStrip = showMatches ? (
     hasGenres && topMatches.length > 0 ? (
@@ -139,6 +177,7 @@ export default function Discover() {
               value={search}
               onChangeText={setSearch}
               style={styles.searchInput}
+              containerStyle={styles.searchField}
             />
           </View>
           <Pressable testID="filter-button" onPress={openFilters} style={styles.filterBtn}>
@@ -172,7 +211,7 @@ export default function Discover() {
     <ChipRow style={{ marginBottom: 4 }}>
       <Chip label={t("common.all")} selected={genre === "All"} onPress={() => setGenre("All")} testID="genre-chip-All" />
       {GENRES.map((g) => (
-        <Chip key={g} label={g} selected={genre === g} onPress={() => setGenre(g)} testID={`genre-chip-${g}`} />
+        <Chip key={g} label={enumLabel(t, "genre", g)} selected={genre === g} onPress={() => setGenre(g)} testID={`genre-chip-${g}`} />
       ))}
     </ChipRow>
   );
@@ -185,10 +224,16 @@ export default function Discover() {
         <ActivityIndicator color={colors.brandPrimary} style={{ marginTop: 40 }} />
       ) : tab === "people" ? (
         <FlatList
+          ref={peopleListRef}
           data={people}
           keyExtractor={(p) => p.user_id}
           renderItem={({ item }) => <PersonCard person={item} />}
-          ListHeaderComponent={MatchesStrip}
+          ListHeaderComponent={
+            <>
+              {LocationBanner}
+              {MatchesStrip}
+            </>
+          }
           contentContainerStyle={{ padding: 20, paddingTop: 8, gap: 14, paddingBottom: 24 }}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={peopleQ.isRefetching} onRefresh={peopleQ.refetch} tintColor={colors.brandPrimary} />}
@@ -202,6 +247,7 @@ export default function Discover() {
         />
       ) : (
         <FlatList
+          ref={booksListRef}
           data={books}
           keyExtractor={(b) => b.id}
           numColumns={2}
@@ -248,7 +294,7 @@ export default function Discover() {
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               <Chip label={t("common.all")} selected={language === "All"} onPress={() => setLanguage("All")} />
               {LANGUAGES.map((l) => (
-                <Chip key={l} label={l} selected={language === l} onPress={() => setLanguage(l)} testID={`lang-${l}`} />
+                <Chip key={l} label={enumLabel(t, "bookLanguage", l)} selected={language === l} onPress={() => setLanguage(l)} testID={`lang-${l}`} />
               ))}
             </View>
           </View>
@@ -288,9 +334,12 @@ const useStyles = makeStyles((colors) => ({
   bell: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   bellDot: { position: "absolute", top: 10, right: 12, width: 9, height: 9, borderRadius: 5, backgroundColor: colors.notification },
   searchRow: { flexDirection: "row", gap: 10, alignItems: "center" },
-  searchPill: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.surfaceSecondary, borderRadius: 14, borderWidth: 1, borderColor: colors.border, paddingLeft: 14 },
-  searchInput: { flex: 1, borderWidth: 0, backgroundColor: "transparent", paddingLeft: 0, paddingVertical: 12 },
-  filterBtn: { width: 50, height: 50, borderRadius: 14, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" },
+  // The pill takes all the row width the fixed-size filter button leaves; the Field's own wrapper must
+  // flex too, or the input only grows to its placeholder's width.
+  searchPill: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.surfaceSecondary, borderRadius: 14, borderWidth: 1, borderColor: colors.border, paddingLeft: 14 },
+  searchField: { flex: 1, minWidth: 0 },
+  searchInput: { borderWidth: 0, backgroundColor: "transparent", paddingLeft: 0, paddingVertical: 12 },
+  filterBtn: { width: 50, height: 50, flexShrink: 0, borderRadius: 14, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" },
   segment: { flexDirection: "row", backgroundColor: colors.surfaceTertiary, borderRadius: 12, padding: 4, marginTop: 14 },
   segItem: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 9, borderRadius: 9 },
   segItemActive: { backgroundColor: colors.surfaceInverse },

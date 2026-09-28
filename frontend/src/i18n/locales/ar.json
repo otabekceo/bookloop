@@ -176,7 +176,6 @@
     "showResults": "عرض النتائج"
   },
   "map": {
-    "city": "ميسينا",
     "densityTitle": "كثافة المتبادلين النشطين",
     "readersNearby": "قارئ واحد قريب",
     "readersNearby_plural": "{{count}} قرّاء قريبون",
@@ -214,7 +213,11 @@
     "statusActive": "نشطة",
     "statusCompleted": "مكتملة",
     "statusDeclined": "مرفوضة",
-    "statusCancelled": "ملغاة"
+    "statusCancelled": "ملغاة",
+    "previousTitle": "سبق أن تبادلت مع {{name}}",
+    "previousBody": "حالة آخر تبادل لك مع {{name}}: {{status}}. هل تريد فتح تلك المحادثة أم إرسال طلب تبادل جديد؟",
+    "openPrevious": "افتح المحادثة السابقة",
+    "newRequest": "طلب تبادل جديد"
   },
   "profile": {
     "currentlyExchanging": "يتبادل حالياً",
@@ -307,7 +310,12 @@
     "enableCamera": "تفعيل الكاميرا",
     "alignFrame": "ضع الباركود داخل الإطار",
     "lookingUp": "جارٍ البحث عن الكتاب…",
-    "lookupFailed": "فشل البحث — أدخل التفاصيل يدوياً"
+    "lookupFailed": "فشل البحث — أدخل التفاصيل يدوياً",
+    "notFoundTitle": "لم يتم العثور على كتاب",
+    "notFoundBody": "لم نعثر على بيانات لرقم ISBN ‏{{isbn}}. امسح مرة أخرى أو أضف الكتاب يدويًا.",
+    "lookupErrorBody": "تعذّر التحقق من هذا الرمز الشريطي. تحقق من الاتصال وحاول مرة أخرى.",
+    "scanAgain": "امسح مرة أخرى",
+    "addManually": "أضف يدويًا"
   },
   "swapChat": {
     "sys": {
@@ -346,7 +354,10 @@
     "somethingWentWrong": "حدث خطأ ما",
     "enablePhotoAccess": "فعّل الوصول إلى الصور من الإعدادات",
     "permissionNeeded": "الإذن مطلوب",
-    "couldNotSendPhoto": "تعذّر إرسال الصورة"
+    "couldNotSendPhoto": "تعذّر إرسال الصورة",
+    "bookUnavailable": "الكتاب غير متاح",
+    "sending": "جارٍ الإرسال…",
+    "notSent": "لم يُرسل — اضغط لإعادة المحاولة"
   },
   "reviews": {
     "title": "التقييمات",
@@ -453,5 +464,103 @@
   "emptyStates": {
     "noResults": "لا توجد نتائج",
     "noResultsHint": "جرّب تعديل عوامل التصفية."
+  },
+  "location": {
+    "within100m": "ضمن 100 م",
+    "notSet": "الموقع غير محدد",
+    "detected": "تم تحديد الموقع",
+    "locating": "جارٍ تحديد موقعك…",
+    "enableTitle": "اعرض القرّاء القريبين منك",
+    "enableBody": "يستخدم BookLoop موقعك لعرض القرّاء القريبين والمسافات. لا يرى الآخرون سوى منطقتك، وليس موقعك الدقيق.",
+    "deniedBody": "تم رفض إذن الموقع. اسمح به لرؤية القرّاء والمسافات القريبة منك.",
+    "blockedBody": "الوصول إلى الموقع متوقف لتطبيق BookLoop. يمكنك تفعيله من الإعدادات.",
+    "servicesOffBody": "خدمات الموقع متوقفة على هذا الجهاز. فعّلها ثم حاول مرة أخرى.",
+    "errorBody": "تعذّر تحديد موقعك. تحقق من الاتصال وحاول مرة أخرى.",
+    "useMyLocation": "استخدم موقعي",
+    "openSettings": "افتح الإعدادات",
+    "update": "تحديث",
+    "fromDevice": "تم تحديده من جهازك"
+  },
+  "permissions": {
+    "cameraTitle": "الوصول إلى الكاميرا",
+    "cameraDenied": "يحتاج BookLoop إلى الكاميرا لالتقاط الصور. اسمح بالوصول للمتابعة.",
+    "cameraBlocked": "الوصول إلى الكاميرا متوقف لتطبيق BookLoop. يمكنك تفعيله من الإعدادات."
+  },
+  "enums": {
+    "genre": {
+      "fiction": "روايات",
+      "psychology": "علم النفس",
+      "business": "أعمال",
+      "history": "تاريخ",
+      "biography": "سيرة ذاتية",
+      "self_development": "تطوير الذات",
+      "romance": "رومانسية",
+      "fantasy": "خيال",
+      "philosophy": "فلسفة",
+      "science": "علوم"
+    },
+    "condition": {
+      "like_new": "كالجديد",
+      "good": "جيدة",
+      "acceptable": "مقبولة"
+    },
+    "bookLanguage": {
+      "uzbek": "الأوزبكية",
+      "english": "الإنجليزية",
+      "russian": "الروسية",
+      "italian": "الإيطالية",
+      "arabic": "العربية",
+      "spanish": "الإسبانية",
+      "french": "الفرنسية",
+      "german": "الألمانية",
+      "portuguese": "البرتغالية"
+    },
+    "interest": {
+      "short_reads": "قراءات قصيرة",
+      "classics": "كلاسيكيات",
+      "bestsellers": "الأكثر مبيعًا",
+      "university_texts": "كتب جامعية",
+      "italian_authors": "مؤلفون إيطاليون",
+      "book_club_picks": "اختيارات نادي الكتاب",
+      "thrillers": "إثارة",
+      "poetry": "شعر",
+      "graphic_novels": "روايات مصورة",
+      "non_fiction_deep_dives": "كتب معرفية معمّقة"
+    }
+  },
+  "apiErrors": {
+    "invalidInput": "يرجى التحقق من البيانات المدخلة.",
+    "sessionExpired": "انتهت صلاحية الجلسة. يرجى تسجيل الدخول مرة أخرى.",
+    "invalidCredentials": "البريد الإلكتروني أو كلمة المرور غير صحيحة",
+    "emailRegistered": "يوجد حساب بهذا البريد الإلكتروني بالفعل",
+    "passwordTooLong": "كلمة المرور طويلة جدًا (72 حرفًا كحد أقصى)",
+    "invalidSignIn": "انتهت صلاحية محاولة تسجيل الدخول. حاول مرة أخرى.",
+    "googleNotConfigured": "تسجيل الدخول عبر Google غير متاح حاليًا",
+    "emailSendFailed": "تعذّر إرسال رسالة التحقق. حاول مرة أخرى.",
+    "notFound": "غير موجود",
+    "userNotFound": "تعذّر العثور على هذا القارئ",
+    "bookNotFound": "تعذّر العثور على هذا الكتاب",
+    "swapNotFound": "تعذّر العثور على هذا التبادل",
+    "unsupportedLanguage": "هذه اللغة غير مدعومة",
+    "titleEmpty": "لا يمكن أن يكون العنوان فارغًا",
+    "invalidStatus": "حالة الكتاب غير صالحة",
+    "bookInActiveSwap": "هذا الكتاب جزء من تبادل نشط. ألغِ التبادل أولًا.",
+    "cannotSwapSelf": "لا يمكنك التبادل مع نفسك",
+    "swapNotPending": "هذا التبادل لم يعد قيد الانتظار",
+    "swapActionNotAllowed": "لا يمكن تنفيذ هذا الإجراء لتبادل حالته «{{status}}»",
+    "swapCannotCancel": "لم يعد من الممكن إلغاء هذا التبادل",
+    "offeredBookNotYours": "يجب أن يكون الكتاب المعروض أحد كتبك المتاحة",
+    "requestedBookUnavailable": "الكتاب المطلوب لم يعد متاحًا",
+    "bookNoLongerAvailable": "أحد الكتب المقترحة لم يعد متاحًا",
+    "noProposal": "لا يوجد عرض لقبوله",
+    "cannotAcceptOwn": "لا يمكنك قبول عرضك الخاص",
+    "useCancelInstead": "استخدم «إلغاء» لسحب عرضك",
+    "swapNotCompleted": "لم يكتمل التبادل بعد",
+    "alreadyRated": "لقد قيّمت هذا التبادل بالفعل",
+    "emptyMessage": "الرسالة فارغة",
+    "unsupportedFileType": "نوع الملف غير مدعوم. ارفع صورة JPEG أو PNG أو WebP أو HEIC.",
+    "imageTooLarge": "الصورة كبيرة جدًا (8 ميغابايت كحد أقصى)",
+    "imageStoreFailed": "تعذّر حفظ الصورة. حاول مرة أخرى.",
+    "invalidFileLink": "انتهت صلاحية رابط الملف"
   }
 }

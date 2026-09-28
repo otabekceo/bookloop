@@ -15,10 +15,12 @@ export type User = {
   email: string;
   avatar_url?: string | null;
   bio: string;
-  city: string;
-  neighborhood: string;
-  lat?: number;
-  lng?: number;
+  /** Area names and coordinates exist only once the device has reported a location (null before). */
+  city: string | null;
+  neighborhood: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  location_updated_at?: string | null;
   genres: string[];
   languages: string[];
   reading_interests: string[];

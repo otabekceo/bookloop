@@ -5,18 +5,21 @@ import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 export default function DensityMap({
   clusters,
+  center,
   onSelect,
 }: {
   clusters: any[];
-  onSelect: (neighborhood: string) => void;
+  /** The viewer's own location; the map opens centered there. */
+  center?: { lat: number; lng: number } | null;
+  onSelect: (clusterId: string) => void;
 }) {
   const { isRTL } = useLanguage();
-  const html = buildLeafletHTML(clusters, isRTL);
+  const html = buildLeafletHTML(clusters, isRTL, center ?? null);
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       try {
         const d = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
-        if (d?.neighborhood) onSelect(d.neighborhood);
+        if (d?.cluster) onSelect(d.cluster);
       } catch {}
     };
     window.addEventListener("message", handler);

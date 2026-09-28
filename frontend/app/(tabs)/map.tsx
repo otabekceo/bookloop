@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { View, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -8,12 +8,19 @@ import { MapPin, Users, BookOpen, ArrowRight } from "phosphor-react-native";
 
 import { AppText, Button, DirectionalIcon } from "@/src/components/ui";
 import DensityMap from "@/src/components/DensityMap";
+import { LocationPrompt } from "@/src/components/LocationPrompt";
 import { apiFetch } from "@/src/api";
+import { useAuth } from "@/src/auth";
+import { areaLabel } from "@/src/distance";
+import { useDeviceLocation } from "@/src/location";
+import { enumLabel } from "@/src/i18n/enums";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { makeStyles, useTheme } from "@/src/theme";
 
 type Cluster = {
+  id: string;
   neighborhood: string;
+  city?: string | null;
   lat: number;
   lng: number;
   people_count: number;
@@ -29,6 +36,18 @@ export default function MapScreen() {
   const { t } = useLanguage();
   const sheetRef = useRef<BottomSheet>(null);
   const [selected, setSelected] = useState<Cluster | null>(null);
+  const { user } = useAuth();
+  const location = useDeviceLocation();
+  const { hasLocation, request } = location;
+
+  // The map is a location feature: opening it is when BookLoop first asks for the permission (if the
+  // user has no location yet). A refusal leaves the explanation card below with retry/Settings.
+  useEffect(() => {
+    if (!hasLocation) request();
+    // Only on first open of the tab, not on every location change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const center = hasLocation && user?.lat != null && user?.lng != null ? { lat: user.lat, lng: user.lng } : null;
 
   const { data, isLoading } = useQuery({
     queryKey: ["clusters"],
@@ -39,8 +58,8 @@ export default function MapScreen() {
   const clusters = data?.clusters || [];
 
   const onSelect = useCallback(
-    (nb: string) => {
-      const c = clusters.find((x) => x.neighborhood === nb);
+    (id: string) => {
+      const c = clusters.find((x) => x.id === id);
       if (c) {
         setSelected(c);
         sheetRef.current?.expand();
@@ -62,19 +81,31 @@ export default function MapScreen() {
             <ActivityIndicator color={colors.brandPrimary} />
           </View>
         ) : (
-          <DensityMap clusters={clusters} onSelect={onSelect} />
+          <DensityMap clusters={clusters} center={center} onSelect={onSelect} />
         )}
         {/* Floating header */}
         <View style={[styles.header, { paddingTop: insets.top + 10 }]} pointerEvents="none">
           <View style={styles.headerPill}>
             <MapPin size={16} color={colors.brandSecondary} weight="fill" />
-            <AppText variant="heading">{t("map.city")}</AppText>
+            <AppText variant="heading" numberOfLines={1}>
+              {user?.city || (user ? areaLabel(t, user) : t("location.notSet"))}
+            </AppText>
           </View>
           <View style={styles.headerPillSmall}>
             <AppText variant="caption" color={colors.muted}>{t("map.densityTitle")}</AppText>
           </View>
         </View>
       </View>
+
+      {!hasLocation && (
+        <LocationPrompt
+          state={location.state}
+          onRequest={request}
+          onOpenSettings={location.openSettings}
+          style={{ marginHorizontal: 20, marginTop: 12 }}
+          testID="map-location-prompt"
+        />
+      )}
 
       <View style={[styles.metricCard, { marginBottom: insets.bottom + 16 }]}>
         <View style={styles.metricIcon}>
@@ -102,7 +133,11 @@ export default function MapScreen() {
             <>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <MapPin size={18} color={colors.brandSecondary} weight="fill" />
-                <AppText variant="title">{selected.neighborhood}</AppText>
+                <AppText variant="title" style={{ flexShrink: 1 }}>
+                  {selected.city && selected.city !== selected.neighborhood
+                    ? `${selected.neighborhood}, ${selected.city}`
+                    : selected.neighborhood}
+                </AppText>
               </View>
               <View style={{ flexDirection: "row", gap: 12 }}>
                 <View style={styles.statBox}>
@@ -122,7 +157,7 @@ export default function MapScreen() {
                   <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
                     {selected.top_genres.map((g) => (
                       <View key={g} style={styles.genreTag}>
-                        <AppText variant="caption" color={colors.onBrandTertiary}>{g}</AppText>
+                        <AppText variant="caption" color={colors.onBrandTertiary}>{enumLabel(t, "genre", g)}</AppText>
                       </View>
                     ))}
                   </View>
@@ -154,7 +189,7 @@ const useStyles = makeStyles((colors) => ({
   mapWrap: { flex: 1, overflow: "hidden" },
   loading: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: { position: "absolute", top: 0, left: 0, right: 0, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", gap: 8 },
-  headerPill: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.surfaceSecondary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: colors.border },
+  headerPill: { flexShrink: 1, flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.surfaceSecondary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: colors.border },
   headerPillSmall: { backgroundColor: colors.surfaceSecondary, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: colors.border },
   metricCard: { flexDirection: "row", alignItems: "center", gap: 14, marginHorizontal: 20, marginTop: 12, backgroundColor: colors.surfaceSecondary, borderRadius: 20, padding: 18, borderWidth: 1, borderColor: colors.border },
   metricIcon: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" },

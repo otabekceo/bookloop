@@ -176,7 +176,6 @@
     "showResults": "Mostra risultati"
   },
   "map": {
-    "city": "Messina",
     "densityTitle": "Densità di scambiatori attivi",
     "readersNearby": "{{count}} lettore nelle vicinanze",
     "readersNearby_plural": "{{count}} lettori nelle vicinanze",
@@ -214,7 +213,11 @@
     "statusActive": "Attivo",
     "statusCompleted": "Completato",
     "statusDeclined": "Rifiutato",
-    "statusCancelled": "Annullato"
+    "statusCancelled": "Annullato",
+    "previousTitle": "Hai già fatto uno scambio con {{name}}",
+    "previousBody": "Il tuo ultimo scambio con {{name}} è: {{status}}. Vuoi aprire quella conversazione o inviare una nuova richiesta di scambio?",
+    "openPrevious": "Apri la chat precedente",
+    "newRequest": "Nuova richiesta di scambio"
   },
   "profile": {
     "currentlyExchanging": "Sta scambiando ora",
@@ -307,7 +310,12 @@
     "enableCamera": "Abilita fotocamera",
     "alignFrame": "Allinea il codice a barre dentro la cornice",
     "lookingUp": "Ricerca del libro…",
-    "lookupFailed": "Ricerca non riuscita — inserisci i dettagli manualmente"
+    "lookupFailed": "Ricerca non riuscita — inserisci i dettagli manualmente",
+    "notFoundTitle": "Nessun libro trovato",
+    "notFoundBody": "Non abbiamo trovato dettagli per l'ISBN {{isbn}}. Scansiona di nuovo o aggiungi il libro manualmente.",
+    "lookupErrorBody": "Impossibile verificare questo codice a barre. Controlla la connessione e riprova.",
+    "scanAgain": "Scansiona di nuovo",
+    "addManually": "Aggiungi manualmente"
   },
   "swapChat": {
     "sys": {
@@ -346,7 +354,10 @@
     "somethingWentWrong": "Qualcosa è andato storto",
     "enablePhotoAccess": "Abilita l'accesso alle foto nelle Impostazioni",
     "permissionNeeded": "Permesso necessario",
-    "couldNotSendPhoto": "Impossibile inviare la foto"
+    "couldNotSendPhoto": "Impossibile inviare la foto",
+    "bookUnavailable": "Libro non disponibile",
+    "sending": "Invio in corso…",
+    "notSent": "Non inviato — tocca per riprovare"
   },
   "reviews": {
     "title": "Recensioni",
@@ -382,7 +393,7 @@
     "gallery": "Galleria",
     "camera": "Fotocamera",
     "name": "Nome",
-    "bio": "Bio",
+    "bio": "Biografia",
     "neighborhood": "Quartiere",
     "interestedGenres": "Generi di interesse",
     "languages": "Lingue",
@@ -453,5 +464,103 @@
   "emptyStates": {
     "noResults": "Nessun risultato",
     "noResultsHint": "Prova a modificare i filtri."
+  },
+  "location": {
+    "within100m": "Entro 100 m",
+    "notSet": "Posizione non impostata",
+    "detected": "Posizione rilevata",
+    "locating": "Rilevamento della posizione…",
+    "enableTitle": "Scopri i lettori vicino a te",
+    "enableBody": "BookLoop usa la tua posizione per mostrarti i lettori vicini e le distanze. Gli altri vedono solo la tua zona, mai la tua posizione esatta.",
+    "deniedBody": "L'accesso alla posizione è stato negato. Consentilo per vedere lettori e distanze vicino a te.",
+    "blockedBody": "L'accesso alla posizione per BookLoop è disattivato. Puoi attivarlo nelle Impostazioni.",
+    "servicesOffBody": "I servizi di localizzazione sono disattivati su questo dispositivo. Attivali e riprova.",
+    "errorBody": "Impossibile rilevare la tua posizione. Controlla la connessione e riprova.",
+    "useMyLocation": "Usa la mia posizione",
+    "openSettings": "Apri Impostazioni",
+    "update": "Aggiorna",
+    "fromDevice": "Rilevata dal tuo dispositivo"
+  },
+  "permissions": {
+    "cameraTitle": "Accesso alla fotocamera",
+    "cameraDenied": "BookLoop ha bisogno della fotocamera per scattare foto. Consenti l'accesso per continuare.",
+    "cameraBlocked": "L'accesso alla fotocamera per BookLoop è disattivato. Puoi attivarlo nelle Impostazioni."
+  },
+  "enums": {
+    "genre": {
+      "fiction": "Narrativa",
+      "psychology": "Psicologia",
+      "business": "Economia",
+      "history": "Storia",
+      "biography": "Biografia",
+      "self_development": "Crescita personale",
+      "romance": "Romanzo rosa",
+      "fantasy": "Fantasy",
+      "philosophy": "Filosofia",
+      "science": "Scienza"
+    },
+    "condition": {
+      "like_new": "Come nuovo",
+      "good": "Buono",
+      "acceptable": "Accettabile"
+    },
+    "bookLanguage": {
+      "uzbek": "Uzbeko",
+      "english": "Inglese",
+      "russian": "Russo",
+      "italian": "Italiano",
+      "arabic": "Arabo",
+      "spanish": "Spagnolo",
+      "french": "Francese",
+      "german": "Tedesco",
+      "portuguese": "Portoghese"
+    },
+    "interest": {
+      "short_reads": "Letture brevi",
+      "classics": "Classici",
+      "bestsellers": "Bestseller",
+      "university_texts": "Testi universitari",
+      "italian_authors": "Autori italiani",
+      "book_club_picks": "Scelte del club del libro",
+      "thrillers": "Thriller",
+      "poetry": "Poesia",
+      "graphic_novels": "Graphic novel",
+      "non_fiction_deep_dives": "Saggistica approfondita"
+    }
+  },
+  "apiErrors": {
+    "invalidInput": "Controlla i dati inseriti.",
+    "sessionExpired": "La sessione è scaduta. Accedi di nuovo.",
+    "invalidCredentials": "Email o password non validi",
+    "emailRegistered": "Esiste già un account con questa email",
+    "passwordTooLong": "La password è troppo lunga (massimo 72 caratteri)",
+    "invalidSignIn": "Il tentativo di accesso è scaduto. Riprova.",
+    "googleNotConfigured": "L'accesso con Google non è disponibile al momento",
+    "emailSendFailed": "Impossibile inviare l'email di verifica. Riprova.",
+    "notFound": "Non trovato",
+    "userNotFound": "Lettore non trovato",
+    "bookNotFound": "Libro non trovato",
+    "swapNotFound": "Scambio non trovato",
+    "unsupportedLanguage": "Questa lingua non è supportata",
+    "titleEmpty": "Il titolo non può essere vuoto",
+    "invalidStatus": "Stato del libro non valido",
+    "bookInActiveSwap": "Questo libro fa parte di uno scambio attivo. Annulla prima lo scambio.",
+    "cannotSwapSelf": "Non puoi fare uno scambio con te stesso",
+    "swapNotPending": "Questo scambio non è più in attesa",
+    "swapActionNotAllowed": "Questa azione non è possibile per uno scambio con stato «{{status}}»",
+    "swapCannotCancel": "Questo scambio non può più essere annullato",
+    "offeredBookNotYours": "Il libro offerto deve essere uno dei tuoi libri disponibili",
+    "requestedBookUnavailable": "Il libro richiesto non è più disponibile",
+    "bookNoLongerAvailable": "Uno dei libri proposti non è più disponibile",
+    "noProposal": "Non c'è nessuna proposta da accettare",
+    "cannotAcceptOwn": "Non puoi accettare la tua stessa proposta",
+    "useCancelInstead": "Usa Annulla per ritirare la tua proposta",
+    "swapNotCompleted": "Lo scambio non è ancora completato",
+    "alreadyRated": "Hai già valutato questo scambio",
+    "emptyMessage": "Il messaggio è vuoto",
+    "unsupportedFileType": "Tipo di file non supportato. Carica un'immagine JPEG, PNG, WebP o HEIC.",
+    "imageTooLarge": "L'immagine è troppo grande (max 8 MB)",
+    "imageStoreFailed": "Impossibile salvare l'immagine. Riprova.",
+    "invalidFileLink": "Il link al file è scaduto"
   }
 }

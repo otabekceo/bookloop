@@ -176,7 +176,6 @@
     "showResults": "Show results"
   },
   "map": {
-    "city": "Messina",
     "densityTitle": "Active exchanger density",
     "readersNearby": "{{count}} reader nearby",
     "readersNearby_plural": "{{count}} readers nearby",
@@ -214,7 +213,11 @@
     "statusActive": "Active",
     "statusCompleted": "Completed",
     "statusDeclined": "Declined",
-    "statusCancelled": "Cancelled"
+    "statusCancelled": "Cancelled",
+    "previousTitle": "You've swapped with {{name}} before",
+    "previousBody": "Your last swap with {{name}} is {{status}}. Open that conversation, or start a new swap request?",
+    "openPrevious": "Open previous chat",
+    "newRequest": "New swap request"
   },
   "profile": {
     "currentlyExchanging": "Currently exchanging",
@@ -307,7 +310,12 @@
     "enableCamera": "Enable camera",
     "alignFrame": "Align the barcode inside the frame",
     "lookingUp": "Looking up book…",
-    "lookupFailed": "Lookup failed — enter details manually"
+    "lookupFailed": "Lookup failed — enter details manually",
+    "notFoundTitle": "No book found",
+    "notFoundBody": "We couldn't find details for ISBN {{isbn}}. Scan again or add the book manually.",
+    "lookupErrorBody": "We couldn't look up this barcode. Check your connection and try again.",
+    "scanAgain": "Scan again",
+    "addManually": "Add manually"
   },
   "swapChat": {
     "sys": {
@@ -346,7 +354,10 @@
     "somethingWentWrong": "Something went wrong",
     "enablePhotoAccess": "Enable photo access in Settings",
     "permissionNeeded": "Permission needed",
-    "couldNotSendPhoto": "Could not send photo"
+    "couldNotSendPhoto": "Could not send photo",
+    "bookUnavailable": "Book unavailable",
+    "sending": "Sending…",
+    "notSent": "Not sent — tap to retry"
   },
   "reviews": {
     "title": "Reviews",
@@ -453,5 +464,103 @@
   "emptyStates": {
     "noResults": "No results",
     "noResultsHint": "Try adjusting your filters."
+  },
+  "location": {
+    "within100m": "Within 100 m",
+    "notSet": "Location not set",
+    "detected": "Location detected",
+    "locating": "Finding your location…",
+    "enableTitle": "Show readers near you",
+    "enableBody": "BookLoop uses your location to show nearby readers and distances. Others only see your area, never your exact position.",
+    "deniedBody": "Location permission was denied. Allow it to see readers and distances near you.",
+    "blockedBody": "Location access is turned off for BookLoop. You can turn it on in Settings.",
+    "servicesOffBody": "Location services are off on this device. Turn them on and try again.",
+    "errorBody": "Couldn't get your location. Check your connection and try again.",
+    "useMyLocation": "Use my location",
+    "openSettings": "Open Settings",
+    "update": "Update",
+    "fromDevice": "Detected from your device"
+  },
+  "permissions": {
+    "cameraTitle": "Camera access",
+    "cameraDenied": "BookLoop needs the camera to take photos. Allow access to continue.",
+    "cameraBlocked": "Camera access is turned off for BookLoop. You can turn it on in Settings."
+  },
+  "enums": {
+    "genre": {
+      "fiction": "Fiction",
+      "psychology": "Psychology",
+      "business": "Business",
+      "history": "History",
+      "biography": "Biography",
+      "self_development": "Self-development",
+      "romance": "Romance",
+      "fantasy": "Fantasy",
+      "philosophy": "Philosophy",
+      "science": "Science"
+    },
+    "condition": {
+      "like_new": "Like New",
+      "good": "Good",
+      "acceptable": "Acceptable"
+    },
+    "bookLanguage": {
+      "uzbek": "Uzbek",
+      "english": "English",
+      "russian": "Russian",
+      "italian": "Italian",
+      "arabic": "Arabic",
+      "spanish": "Spanish",
+      "french": "French",
+      "german": "German",
+      "portuguese": "Portuguese"
+    },
+    "interest": {
+      "short_reads": "Short reads",
+      "classics": "Classics",
+      "bestsellers": "Bestsellers",
+      "university_texts": "University texts",
+      "italian_authors": "Italian authors",
+      "book_club_picks": "Book club picks",
+      "thrillers": "Thrillers",
+      "poetry": "Poetry",
+      "graphic_novels": "Graphic novels",
+      "non_fiction_deep_dives": "Non-fiction deep dives"
+    }
+  },
+  "apiErrors": {
+    "invalidInput": "Please check the details you entered.",
+    "sessionExpired": "Your session has expired. Please sign in again.",
+    "invalidCredentials": "Invalid email or password",
+    "emailRegistered": "An account with this email already exists",
+    "passwordTooLong": "Password is too long (maximum 72 characters)",
+    "invalidSignIn": "This sign-in attempt expired. Please try again.",
+    "googleNotConfigured": "Google sign-in isn't available right now",
+    "emailSendFailed": "Couldn't send the verification email. Please try again.",
+    "notFound": "Not found",
+    "userNotFound": "This reader could not be found",
+    "bookNotFound": "This book could not be found",
+    "swapNotFound": "This swap could not be found",
+    "unsupportedLanguage": "This language isn't supported",
+    "titleEmpty": "Title can't be empty",
+    "invalidStatus": "Invalid book status",
+    "bookInActiveSwap": "This book is part of an active swap. Cancel the swap first.",
+    "cannotSwapSelf": "You can't swap with yourself",
+    "swapNotPending": "This swap is no longer pending",
+    "swapActionNotAllowed": "This action isn't possible for a swap that is {{status}}",
+    "swapCannotCancel": "This swap can no longer be cancelled",
+    "offeredBookNotYours": "The book you offer must be one of your available books",
+    "requestedBookUnavailable": "The requested book is no longer available",
+    "bookNoLongerAvailable": "One of the proposed books is no longer available",
+    "noProposal": "There is no proposal to accept",
+    "cannotAcceptOwn": "You can't accept your own proposal",
+    "useCancelInstead": "Use Cancel to withdraw your own proposal",
+    "swapNotCompleted": "The swap isn't completed yet",
+    "alreadyRated": "You've already rated this swap",
+    "emptyMessage": "Message is empty",
+    "unsupportedFileType": "Unsupported file type. Upload a JPEG, PNG, WebP or HEIC image.",
+    "imageTooLarge": "Image is too large (max 8 MB)",
+    "imageStoreFailed": "Couldn't save the image. Please try again.",
+    "invalidFileLink": "This file link has expired"
   }
 }

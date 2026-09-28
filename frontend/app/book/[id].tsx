@@ -8,9 +8,12 @@ import { ArrowLeft, Trash, MapPin, ArrowsClockwise, Fire } from "phosphor-react-
 
 import { AppText, Avatar, Button, Field, Chip, BookCover, StatusBadge, RatingPill, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
 import { apiFetch } from "@/src/api";
+import { distanceOrArea } from "@/src/distance";
+import { openOrRequestSwap } from "@/src/swapStart";
 import { CONDITIONS, GENRES, LANGUAGES, BOOK_STATUSES } from "@/src/constants";
 import { makeStyles, useTheme } from "@/src/theme";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
+import { enumLabel, type EnumKind } from "@/src/i18n/enums";
 
 export default function BookDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -75,11 +78,13 @@ export default function BookDetail() {
   const startSwap = async () => {
     haptic("light");
     try {
-      const res = await apiFetch<{ swap: { id: string } }>("/api/swaps", {
-        method: "POST",
-        body: { receiver_id: data!.owner.user_id },
+      await openOrRequestSwap({
+        userId: data!.owner.user_id,
+        name: data!.owner.name?.split(" ")[0] || "",
+        t,
+        open: (swapId) => router.push(`/swap/${swapId}`),
+        onError: (message) => toast(message || t("bookDetail.couldNotStartSwap"), "error"),
       });
-      router.push(`/swap/${res.swap.id}`);
     } catch (e: any) {
       toast(e.message || t("bookDetail.couldNotStartSwap"), "error");
     }
@@ -115,17 +120,17 @@ export default function BookDetail() {
                 <View testID="wanted-by" style={styles.wantedPill}>
                   <Fire size={14} color={colors.onBrandTertiary} weight="fill" />
                   <AppText variant="caption" color={colors.onBrandTertiary}>
-                    {t("bookDetail.wantedBy", { count: data.wanted_by, genre: form.genre })}
+                    {t("bookDetail.wantedBy", { count: data.wanted_by, genre: enumLabel(t, "genre", form.genre) })}
                   </AppText>
                 </View>
               )}
             </View>
             <Field label={t("bookDetail.titleLabel")} value={form.title} onChangeText={(v) => setForm({ ...form, title: v })} onSurface testID="edit-title" />
             <Field label={t("bookDetail.authorLabel")} value={form.author} onChangeText={(v) => setForm({ ...form, author: v })} onSurface testID="edit-author" />
-            <EditGroup label={t("bookDetail.statusLabel")} options={BOOK_STATUSES} value={form.status} onChange={(v) => setForm({ ...form, status: v })} />
-            <EditGroup label={t("bookDetail.conditionLabel")} options={CONDITIONS} value={form.condition} onChange={(v) => setForm({ ...form, condition: v })} />
-            <EditGroup label={t("bookDetail.genreLabel")} options={GENRES} value={form.genre} onChange={(v) => setForm({ ...form, genre: v })} />
-            <EditGroup label={t("bookDetail.languageLabel")} options={LANGUAGES} value={form.language} onChange={(v) => setForm({ ...form, language: v })} />
+            <EditGroup label={t("bookDetail.statusLabel")} options={BOOK_STATUSES} kind="bookStatus" value={form.status} onChange={(v) => setForm({ ...form, status: v })} />
+            <EditGroup label={t("bookDetail.conditionLabel")} options={CONDITIONS} kind="condition" value={form.condition} onChange={(v) => setForm({ ...form, condition: v })} />
+            <EditGroup label={t("bookDetail.genreLabel")} options={GENRES} kind="genre" value={form.genre} onChange={(v) => setForm({ ...form, genre: v })} />
+            <EditGroup label={t("bookDetail.languageLabel")} options={form.language && !LANGUAGES.includes(form.language) ? [...LANGUAGES, form.language] : LANGUAGES} kind="bookLanguage" value={form.language} onChange={(v) => setForm({ ...form, language: v })} />
           </KeyboardAwareScrollView>
           <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
             <Button testID="save-book-edit" title={t("bookDetail.saveChanges")} onPress={save} loading={saving} />
@@ -145,13 +150,13 @@ export default function BookDetail() {
               <View style={styles.badgeRow}>
                 <StatusBadge status={form.status} />
                 <View style={styles.metaBadge}>
-                  <AppText variant="caption" color={colors.onSurfaceTertiary}>{form.condition}</AppText>
+                  <AppText variant="caption" color={colors.onSurfaceTertiary}>{enumLabel(t, "condition", form.condition)}</AppText>
                 </View>
                 <View style={styles.metaBadge}>
-                  <AppText variant="caption" color={colors.onSurfaceTertiary}>{form.genre}</AppText>
+                  <AppText variant="caption" color={colors.onSurfaceTertiary}>{enumLabel(t, "genre", form.genre)}</AppText>
                 </View>
                 <View style={styles.metaBadge}>
-                  <AppText variant="caption" color={colors.onSurfaceTertiary}>{form.language}</AppText>
+                  <AppText variant="caption" color={colors.onSurfaceTertiary}>{enumLabel(t, "bookLanguage", form.language)}</AppText>
                 </View>
               </View>
             </View>
@@ -164,7 +169,7 @@ export default function BookDetail() {
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
                     <MapPin size={13} color={colors.brandSecondary} weight="fill" />
                     <AppText variant="caption" color={colors.muted}>
-                      {data.owner.distance_km < 999 ? `${data.owner.distance_km} km` : data.owner.neighborhood}
+                      {distanceOrArea(t, data.owner, false)}
                     </AppText>
                   </View>
                   <RatingPill rating={data.owner.rating} count={data.owner.rating_count} />
@@ -186,14 +191,15 @@ export default function BookDetail() {
   );
 }
 
-function EditGroup({ label, options, value, onChange }: { label: string; options: string[]; value: string; onChange: (v: string) => void }) {
+function EditGroup({ label, options, kind, value, onChange }: { label: string; options: readonly string[]; kind: EnumKind; value: string; onChange: (v: string) => void }) {
   const styles = useStyles();
+  const { t } = useLanguage();
   return (
     <View style={{ gap: 10 }}>
       <AppText variant="label">{label}</AppText>
       <View style={styles.chipWrap}>
         {options.map((o) => (
-          <Chip key={o} label={o} selected={value === o} onPress={() => onChange(o)} testID={`edit-${label}-${o}`} />
+          <Chip key={o} label={enumLabel(t, kind, o)} selected={value === o} onPress={() => onChange(o)} testID={`edit-${kind}-${o}`} />
         ))}
       </View>
     </View>

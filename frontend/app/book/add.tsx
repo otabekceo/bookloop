@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { View, Pressable, ActivityIndicator, FlatList, Platform } from "react-native";
-import { useRouter, Stack, useLocalSearchParams } from "expo-router";
+import { useRouter, Stack, useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useQueryClient } from "@tanstack/react-query";
@@ -8,11 +8,13 @@ import { X, Camera, Image as ImageIcon, Plus, MagnifyingGlass, Barcode, PencilSi
 
 import { AppText, Button, Field, Chip, BookCover, haptic, useToast } from "@/src/components/ui";
 import { apiFetch } from "@/src/api";
-import { pickImage, uploadWithProgress, openSettings } from "@/src/media";
+import { pickImage, uploadWithProgress, cameraDeniedAlert } from "@/src/media";
 import { searchBooks, BookResult } from "@/src/googlebooks";
+import { takeScanResult, type ScanPrefill } from "@/src/scanResult";
 import { CONDITIONS, GENRES, LANGUAGES } from "@/src/constants";
 import { makeStyles, useTheme } from "@/src/theme";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
+import { enumLabel, type EnumKind } from "@/src/i18n/enums";
 
 type Mode = "search" | "scan" | "manual";
 
@@ -42,20 +44,35 @@ export default function AddBook() {
   const [results, setResults] = useState<BookResult[]>([]);
   const [searching, setSearching] = useState(false);
 
-  // Prefill from barcode scan
+  const applyPrefill = (p: ScanPrefill) => {
+    if (p.title) setTitle(p.title);
+    if (p.author) setAuthor(p.author);
+    if (p.cover_url) setCoverUrl(p.cover_url);
+    if (p.isbn) setIsbn(p.isbn);
+    if (p.language) setLanguage(p.language);
+    setMode("manual");
+    toast(p.title ? t("addBook.bookFound") : t("addBook.addDetailsBelow"), "success");
+  };
+
+  // Result handed back by the scanner (it goes back to this same screen instead of opening a new one).
+  const scannerOpen = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      scannerOpen.current = false;
+      const scan = takeScanResult();
+      if (scan) applyPrefill(scan);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []),
+  );
+
+  // Prefill passed as a route param (links that open Add Book directly).
   useEffect(() => {
     if (params.prefill) {
       try {
-        const p = JSON.parse(params.prefill as string);
-        if (p.title) setTitle(p.title);
-        if (p.author) setAuthor(p.author);
-        if (p.cover_url) setCoverUrl(p.cover_url);
-        if (p.isbn) setIsbn(p.isbn);
-        if (p.language) setLanguage(p.language);
-        setMode("manual");
-        toast(p.title ? t("addBook.bookFound") : t("addBook.addDetailsBelow"), "success");
+        applyPrefill(JSON.parse(params.prefill as string));
       } catch {}
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.prefill]);
 
   // Debounced search
@@ -89,10 +106,7 @@ export default function AddBook() {
 
   const chooseImage = async (source: "library" | "camera") => {
     haptic("light");
-    const picked = await pickImage(source, (blocked) => {
-      toast(blocked ? t("addBook.enableAccessSettings") : t("addBook.permissionPhoto"), "error");
-      if (blocked) openSettings();
-    });
+    const picked = await pickImage(source, (blocked) => cameraDeniedAlert(t, blocked, () => chooseImage(source)));
     if (!picked) return;
     setUploadPct(0);
     try {
@@ -179,6 +193,7 @@ export default function AddBook() {
                 onChangeText={setQuery}
                 autoFocus
                 style={styles.searchInput}
+                containerStyle={styles.searchField}
               />
               {searching && <ActivityIndicator color={colors.brandPrimary} />}
             </View>
@@ -226,7 +241,12 @@ export default function AddBook() {
             testID="open-scanner"
             title={t("addBook.openScanner")}
             icon={<Camera size={18} color={colors.onBrandPrimary} weight="fill" />}
-            onPress={() => router.push("/book/scan")}
+            onPress={() => {
+              // One scanner at a time: a quick double tap must not push two.
+              if (scannerOpen.current) return;
+              scannerOpen.current = true;
+              router.push("/book/scan");
+            }}
             style={{ paddingHorizontal: 28 }}
           />
         </View>
@@ -268,9 +288,9 @@ export default function AddBook() {
             <Field testID="title-input" label={t("bookDetail.titleLabel")} placeholder={t("addBook.titlePlaceholder")} value={title} onChangeText={setTitle} onSurface />
             <Field testID="author-input" label={t("bookDetail.authorLabel")} placeholder={t("addBook.authorPlaceholder")} value={author} onChangeText={setAuthor} onSurface />
 
-            <ChipGroup label={t("bookDetail.conditionLabel")} options={CONDITIONS} value={condition} onChange={setCondition} idPrefix="condition" />
-            <ChipGroup label={t("bookDetail.genreLabel")} options={GENRES} value={genre} onChange={setGenre} idPrefix="add-genre" />
-            <ChipGroup label={t("bookDetail.languageLabel")} options={LANGUAGES} value={language} onChange={setLanguage} idPrefix="add-lang" />
+            <ChipGroup label={t("bookDetail.conditionLabel")} options={CONDITIONS} kind="condition" value={condition} onChange={setCondition} idPrefix="condition" />
+            <ChipGroup label={t("bookDetail.genreLabel")} options={GENRES} kind="genre" value={genre} onChange={setGenre} idPrefix="add-genre" />
+            <ChipGroup label={t("bookDetail.languageLabel")} options={withCurrent(LANGUAGES, language)} kind="bookLanguage" value={language} onChange={setLanguage} idPrefix="add-lang" />
           </KeyboardAwareScrollView>
           <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
             <Button testID="save-book-button" title={t("addBook.addToShelf")} onPress={save} loading={saving} icon={<Plus size={18} color={colors.onBrandPrimary} weight="bold" />} />
@@ -281,14 +301,20 @@ export default function AddBook() {
   );
 }
 
-function ChipGroup({ label, options, value, onChange, idPrefix }: { label: string; options: string[]; value: string; onChange: (v: string) => void; idPrefix: string }) {
+/** Keeps a value that is no longer offered (e.g. a legacy book language from a scan) selectable. */
+function withCurrent(options: string[], current: string): string[] {
+  return current && !options.includes(current) ? [...options, current] : options;
+}
+
+function ChipGroup({ label, options, kind, value, onChange, idPrefix }: { label: string; options: string[]; kind: EnumKind; value: string; onChange: (v: string) => void; idPrefix: string }) {
   const styles = useStyles();
+  const { t } = useLanguage();
   return (
     <View style={{ gap: 10 }}>
       <AppText variant="label">{label}</AppText>
       <View style={styles.chipWrap}>
         {options.map((o) => (
-          <Chip key={o} label={o} selected={value === o} onPress={() => onChange(o)} testID={`${idPrefix}-${o}`} />
+          <Chip key={o} label={enumLabel(t, kind, o)} selected={value === o} onPress={() => onChange(o)} testID={`${idPrefix}-${o}`} />
         ))}
       </View>
     </View>
@@ -304,7 +330,10 @@ const useStyles = makeStyles((colors) => ({
   segItemActive: { backgroundColor: colors.surfaceInverse },
   searchWrap: { paddingHorizontal: 20 },
   searchPill: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.surfaceSecondary, borderRadius: 14, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 14 },
-  searchInput: { flex: 1, borderWidth: 0, backgroundColor: "transparent", paddingLeft: 0, paddingVertical: 12 },
+  // The Field wrapper (not the input) takes the free width: an input sized to its own text lets
+  // Android scroll the typed characters out of view (same fix as the Discover search).
+  searchField: { flex: 1, minWidth: 0 },
+  searchInput: { borderWidth: 0, backgroundColor: "transparent", paddingLeft: 0, paddingVertical: 12 },
   resultRow: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.surfaceSecondary, borderRadius: 14, padding: 10, borderWidth: 1, borderColor: colors.border },
   scanPane: { flex: 1, alignItems: "center", justifyContent: "center", gap: 14, padding: 30 },
   scanIcon: { width: 80, height: 80, borderRadius: 40, backgroundColor: colors.sageSoft, alignItems: "center", justifyContent: "center" },

@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 
 import { storage } from "@/src/utils/storage";
+import { localizeApiError } from "@/src/i18n/apiErrors";
 
 const BASE = ((process.env.EXPO_PUBLIC_BACKEND_URL as string | undefined) || "").replace(/\/+$/, "");
 export const API_BASE = BASE;
@@ -51,6 +52,7 @@ type Options = {
   method?: string;
   body?: any;
   headers?: Record<string, string>;
+  signal?: AbortSignal;
 };
 
 // Called when a request that carried a session token comes back 401 (expired or revoked
@@ -71,14 +73,21 @@ export async function apiFetch<T = any>(path: string, opts: Options = {}): Promi
   const headers: Record<string, string> = { ...(opts.headers || {}) };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(BASE + path, {
-    method: opts.method || "GET",
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(BASE + path, {
+      method: opts.method || "GET",
+      headers,
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal: opts.signal,
+    });
+  } catch (e: any) {
+    if (e?.name === "AbortError") throw e;
+    throw new ApiError(localizeApiError(undefined, 0), 0); // never reached the server
+  }
   if (res.status === 401 && token) onUnauthorized?.(token);
   if (!res.ok) {
-    let msg = `Request failed (${res.status})`;
+    let msg: string | undefined;
     let code: string | undefined;
     try {
       const data = await res.json();
@@ -98,7 +107,9 @@ export async function apiFetch<T = any>(path: string, opts: Options = {}): Promi
     } catch {
       // ignore
     }
-    throw new ApiError(msg, res.status, code);
+    // Coded errors keep the server text: their screens translate them by `code`. Everything else is
+    // shown to the user as-is, so it is translated here (the server only speaks English).
+    throw new ApiError(code ? msg || localizeApiError(undefined, res.status) : localizeApiError(msg, res.status), res.status, code);
   }
   const ct = res.headers.get("content-type") || "";
   return (ct.includes("json") ? res.json() : res.text()) as Promise<T>;
@@ -128,6 +139,6 @@ export async function uploadImage(uri: string): Promise<{ path: string; url: str
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     body: form,
   });
-  if (!res.ok) throw new ApiError("Upload failed", res.status);
+  if (!res.ok) throw new ApiError(localizeApiError(undefined, res.status), res.status);
   return res.json();
 }

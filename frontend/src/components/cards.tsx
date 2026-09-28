@@ -7,13 +7,17 @@ import { Badge, BadgeIcon, topBadge } from "@/src/components/badges";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { badgeLabel } from "@/src/i18n/messageKeys";
 import { bidiIsolate } from "@/src/i18n";
+import { distanceOrArea } from "@/src/distance";
+import { enumLabel } from "@/src/i18n/enums";
 import { useTheme } from "@/src/theme";
 
 export type Person = {
   user_id: string;
   name: string;
   avatar_url?: string | null;
-  neighborhood: string;
+  neighborhood?: string | null;
+  city?: string | null;
+  /** 999 = unknown (either reader has no location yet); never below 0.1 ("Within 100 m"). */
   distance_km: number;
   rating: number;
   rating_count: number;
@@ -71,30 +75,35 @@ export function PersonCard({ person }: { person: Person }) {
     >
       <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
         <Avatar uri={person.avatar_url} name={person.name} size={52} />
-        <View style={{ flex: 1, gap: 3 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <AppText variant="heading">{person.name}</AppText>
-            <ExchangingDot active={person.is_exchanging} />
+        {/* minWidth 0 lets this column shrink to the card instead of pushing past its edge; both rows
+            wrap, so a long name, badge or translated label moves to the next line rather than
+            overflowing (nothing is truncated away). */}
+        <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 8, rowGap: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1, maxWidth: "100%" }}>
+              <AppText variant="heading" style={{ flexShrink: 1 }}>
+                {person.name}
+              </AppText>
+              <ExchangingDot active={person.is_exchanging} />
+            </View>
             {best && (
-              <View testID={`person-badge-${best.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: colors.brandTertiary, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 }}>
+              <View testID={`person-badge-${best.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 3, flexShrink: 1, maxWidth: "100%", backgroundColor: colors.brandTertiary, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 }}>
                 <BadgeIcon id={best.id} size={12} color={colors.onBrandTertiary} />
-                <AppText variant="caption" color={colors.onBrandTertiary} style={{ fontSize: 11 }}>
+                <AppText variant="caption" color={colors.onBrandTertiary} style={{ fontSize: 11, flexShrink: 1 }}>
                   {badgeLabel(t, best)}
                 </AppText>
               </View>
             )}
           </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: 10, rowGap: 2 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 3, flexShrink: 1, maxWidth: "100%" }}>
               <MapPin size={13} color={colors.brandSecondary} weight="fill" />
-              <AppText variant="caption" color={colors.muted}>
-                {person.distance_km < 999
-                  ? t("common.kmAway", { distance: person.distance_km })
-                  : person.neighborhood}
+              <AppText variant="caption" color={colors.muted} style={{ flexShrink: 1 }}>
+                {distanceOrArea(t, person)}
               </AppText>
             </View>
             <RatingPill rating={person.rating} count={person.rating_count} />
-            <AppText variant="caption" color={colors.muted}>
+            <AppText variant="caption" color={colors.muted} style={{ flexShrink: 1 }}>
               {t("common.swapCount", { count: person.swaps_count })}
             </AppText>
           </View>
@@ -116,7 +125,7 @@ export function PersonCard({ person }: { person: Person }) {
             return (
               <View key={g} style={{ backgroundColor: hit ? colors.brandTertiary : colors.surfaceTertiary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 }}>
                 <AppText variant="caption" color={hit ? colors.onBrandTertiary : colors.onSurfaceTertiary}>
-                  {bidiIsolate(g, language)}
+                  {bidiIsolate(enumLabel(t, "genre", g), language)}
                 </AppText>
               </View>
             );
@@ -180,15 +189,13 @@ export function MatchCard({ person }: { person: Person }) {
         {shared.slice(0, 2).map((g) => (
           <View key={g} style={{ backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
             <AppText variant="caption" color={colors.onBrandTertiary} style={{ fontSize: 11 }}>
-              {bidiIsolate(g, language)}
+              {bidiIsolate(enumLabel(t, "genre", g), language)}
             </AppText>
           </View>
         ))}
       </View>
-      <AppText variant="caption" color={colors.muted}>
-        {person.distance_km < 999
-          ? t("common.kmAway", { distance: person.distance_km })
-          : person.neighborhood}
+      <AppText variant="caption" color={colors.muted} style={{ textAlign: "center" }}>
+        {distanceOrArea(t, person)}
       </AppText>
     </Pressable>
   );

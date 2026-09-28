@@ -13,6 +13,8 @@ import { BadgeGrid } from "@/src/components/badges";
 import { useAuth, type User } from "@/src/auth";
 import { apiFetch } from "@/src/api";
 import { useAppearance } from "@/src/appearance";
+import { useDeviceLocation } from "@/src/location";
+import { enumLabel } from "@/src/i18n/enums";
 import { useLanguage, useLanguageMeta } from "@/src/i18n/LanguageProvider";
 import { makeStyles, useTheme } from "@/src/theme";
 
@@ -25,6 +27,7 @@ export default function Profile() {
   const { t } = useLanguage();
   const meta = useLanguageMeta();
   const { preference: appearancePreference } = useAppearance();
+  const location = useDeviceLocation();
   const toast = useToast();
   const qc = useQueryClient();
   const { width } = useWindowDimensions();
@@ -109,12 +112,39 @@ export default function Profile() {
         <AppText variant="title" style={{ marginTop: 12 }}>
           {user.name}
         </AppText>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+        {/* Location comes only from the device: tapping it re-reads the position (and asks for the
+            permission if it was never granted, or opens Settings once it's blocked). */}
+        <Pressable
+          testID="profile-location"
+          onPress={location.state === "blocked" ? location.openSettings : location.request}
+          disabled={location.state === "locating"}
+          style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", justifyContent: "center", gap: 4, marginTop: 2, paddingHorizontal: 20 }}
+        >
           <MapPin size={14} color={colors.brandSecondary} weight="fill" />
-          <AppText variant="body" color={colors.muted}>
-            {user.neighborhood}, {user.city}
+          <AppText variant="body" color={colors.muted} style={{ textAlign: "center" }}>
+            {location.state === "locating"
+              ? t("location.locating")
+              : location.hasLocation
+                ? [user.neighborhood, user.city].filter(Boolean).join(", ") || t("location.detected")
+                : t("location.notSet")}
           </AppText>
-        </View>
+          {!location.hasLocation && location.state !== "locating" && (
+            <AppText variant="label" color={colors.brandPrimary}>
+              {location.state === "blocked" ? t("location.openSettings") : t("location.useMyLocation")}
+            </AppText>
+          )}
+        </Pressable>
+        {!location.hasLocation && (location.state === "denied" || location.state === "servicesOff" || location.state === "error" || location.state === "blocked") && (
+          <AppText variant="caption" color={colors.muted} style={{ textAlign: "center", marginTop: 4, paddingHorizontal: 24 }}>
+            {location.state === "denied"
+              ? t("location.deniedBody")
+              : location.state === "blocked"
+                ? t("location.blockedBody")
+                : location.state === "servicesOff"
+                  ? t("location.servicesOffBody")
+                  : t("location.errorBody")}
+          </AppText>
+        )}
       </View>
 
       <View style={styles.stats}>
@@ -211,7 +241,7 @@ export default function Profile() {
             {user.genres.map((g) => (
               <View key={g} style={styles.tag}>
                 <AppText variant="label" color={colors.onBrandTertiary}>
-                  {g}
+                  {enumLabel(t, "genre", g)}
                 </AppText>
               </View>
             ))}
@@ -230,7 +260,7 @@ export default function Profile() {
             {user.reading_interests.map((i) => (
               <View key={i} style={[styles.tag, { backgroundColor: colors.surfaceTertiary }]}>
                 <AppText variant="label" color={colors.onSurfaceTertiary}>
-                  {i}
+                  {enumLabel(t, "interest", i)}
                 </AppText>
               </View>
             ))}
@@ -244,7 +274,7 @@ export default function Profile() {
           {user.languages.map((l) => (
             <View key={l} style={[styles.tag, { backgroundColor: colors.sageSoft }]}>
               <AppText variant="label" color={colors.brandSecondary}>
-                {l}
+                {enumLabel(t, "bookLanguage", l)}
               </AppText>
             </View>
           ))}

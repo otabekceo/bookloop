@@ -181,6 +181,29 @@ def haversine_km(lat1, lng1, lat2, lng2) -> float:
     return round(r * 2 * math.asin(math.sqrt(a)), 1)
 
 
+UNKNOWN_DISTANCE_KM = 999.0
+# Privacy floor: readers closer than this are reported as exactly this far, so the API never reveals
+# a finer proximity than "within 100 m" (the app renders this value as that phrase).
+MIN_REPORTED_DISTANCE_KM = 0.1
+
+
+def has_location(u: Optional[dict]) -> bool:
+    """True only for a location that actually came from the user's device (location_updated_at is
+    set by PUT /users/me/location), or for the seeded demo community, which has fixed coordinates.
+    Accounts created before device location existed still carry a hardcoded Messina default in
+    lat/lng/city/neighborhood; that default is ignored everywhere rather than treated as real."""
+    if not u or u.get("lat") is None or u.get("lng") is None:
+        return False
+    return bool(u.get("location_updated_at") or u.get("seed"))
+
+
+def user_distance_km(a: Optional[dict], b: Optional[dict]) -> float:
+    """Distance between two users' real locations; UNKNOWN_DISTANCE_KM when either has none."""
+    if not has_location(a) or not has_location(b):
+        return UNKNOWN_DISTANCE_KM
+    return max(MIN_REPORTED_DISTANCE_KM, haversine_km(a["lat"], a["lng"], b["lat"], b["lng"]))
+
+
 # ----------------------------------------------------------------------------
 # Models
 # ----------------------------------------------------------------------------
@@ -206,18 +229,26 @@ class SessionBody(BaseModel):
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     bio: Optional[str] = None
-    city: Optional[str] = None
-    neighborhood: Optional[str] = None
+    # city / neighborhood / lat / lng are deliberately NOT here: location only comes from the device via
+    # PUT /users/me/location. Older app builds still send them on save; pydantic drops unknown fields.
     avatar_url: Optional[str] = None
     genres: Optional[List[str]] = None
     languages: Optional[List[str]] = None
     reading_interests: Optional[List[str]] = None
     is_exchanging: Optional[bool] = None
-    lat: Optional[float] = None
-    lng: Optional[float] = None
     preferred_language: Optional[str] = None
     # Set to true by the Welcome screen's "Start exploring" tap — never shown again after that.
     onboarding_completed: Optional[bool] = None
+
+
+class LocationUpdate(BaseModel):
+    """The device's current position plus the area names the device's reverse geocoder derived from it.
+    Area names are optional: when the geocoder has no neighborhood, the app sends only the city."""
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    city: Optional[str] = Field(default=None, max_length=80)
+    neighborhood: Optional[str] = Field(default=None, max_length=80)
+    country: Optional[str] = Field(default=None, max_length=80)
 
 
 class BookBody(BaseModel):
@@ -259,6 +290,10 @@ class ProposeBody(BaseModel):
 class MessageBody(BaseModel):
     text: str = ""
     image_url: Optional[str] = None
+    # Chosen by the app for each message it sends. A retry of the same send (slow network, app
+    # resent after a timeout) carries the same id and gets the original message back instead of a
+    # duplicate.
+    client_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class RateBody(BaseModel):
@@ -314,6 +349,7 @@ def public_user(u: dict, private: bool = False) -> dict:
     if not u:
         return {}
     swaps = u.get("swaps_count", 0)
+    located = has_location(u)
     out = {
         "reading_interests": u.get("reading_interests", []),
         "badges": compute_badges(swaps),
@@ -321,8 +357,10 @@ def public_user(u: dict, private: bool = False) -> dict:
         "name": u.get("name", ""),
         "avatar_url": u.get("avatar_url"),
         "bio": u.get("bio", ""),
-        "city": u.get("city", "Messina"),
-        "neighborhood": u.get("neighborhood", "Centro"),
+        # Area labels only once a real location exists (see has_location); otherwise null, which the
+        # app shows as "location not set" instead of a made-up place.
+        "city": u.get("city") if located else None,
+        "neighborhood": u.get("neighborhood") if located else None,
         "genres": u.get("genres", []),
         "languages": u.get("languages", []),
         "is_exchanging": u.get("is_exchanging", True),
@@ -335,8 +373,9 @@ def public_user(u: dict, private: bool = False) -> dict:
         out.update(
             {
                 "email": u.get("email", ""),
-                "lat": u.get("lat"),
-                "lng": u.get("lng"),
+                "lat": u.get("lat") if located else None,
+                "lng": u.get("lng") if located else None,
+                "location_updated_at": u["location_updated_at"].isoformat() if u.get("location_updated_at") else None,
                 # Missing on any account that predates this field (defaults True: never re-surface the
                 # welcome screen for an existing user — startup's backfill_onboarding_state() also sets
                 # this explicitly, this default is just extra safety before/around that).
@@ -487,10 +526,11 @@ def _build_user_doc(
         "name": name,
         "avatar_url": None,
         "bio": "",
-        "city": "Messina",
-        "neighborhood": "Centro",
-        "lat": 38.1938,
-        "lng": 15.5540,
+        # No location until the device reports one (PUT /users/me/location) — never a made-up default.
+        "city": None,
+        "neighborhood": None,
+        "lat": None,
+        "lng": None,
         "genres": [],
         "languages": ["Italian", "English"],
         "is_exchanging": True,
@@ -662,6 +702,8 @@ if OTP_DEBUG_MODE:
         if await db.users.find_one({"email": body.email.lower()}):
             raise HTTPException(status_code=400, detail="Email already registered")
         user = _build_user_doc(body.email, body.name, hash_pw(body.password), body.preferred_language, onboarding_completed=True)
+        # Marks accounts made by the test suite so they can always be told apart from real sign-ups.
+        user["test_account"] = True
         await db.users.insert_one(user)
         token = await create_session(user["user_id"])
         return {"session_token": token, "user": public_user(user, private=True)}
@@ -817,10 +859,10 @@ async def _google_user(claims: dict) -> Optional[dict]:
             "name": name,
             "avatar_url": picture,
             "bio": "",
-            "city": "Messina",
-            "neighborhood": "Centro",
-            "lat": 38.1938,
-            "lng": 15.5540,
+            "city": None,
+            "neighborhood": None,
+            "lat": None,
+            "lng": None,
             "genres": [],
             "languages": ["Italian", "English"],
             "is_exchanging": True,
@@ -866,6 +908,33 @@ async def update_me(body: ProfileUpdate, user: dict = Depends(get_current_user))
     return {"user": public_user(fresh, private=True)}
 
 
+def _clean_place(v: Optional[str]) -> Optional[str]:
+    v = (v or "").strip()
+    return v or None
+
+
+@api.put("/users/me/location")
+async def update_my_location(body: LocationUpdate, user: dict = Depends(get_current_user)):
+    """The only way a user's location changes: the app sends the device position after the user
+    granted location permission. Coordinates are stored at ~11 m precision (4 decimals) and are never
+    returned to other users — they only ever see an area name and a distance."""
+    neighborhood = _clean_place(body.neighborhood)
+    city = _clean_place(body.city)
+    if neighborhood and city and neighborhood.casefold() == city.casefold():
+        neighborhood = None  # the geocoder echoed the city: don't show "Tashkent, Tashkent"
+    updates = {
+        "lat": round(body.lat, 4),
+        "lng": round(body.lng, 4),
+        "city": city,
+        "neighborhood": neighborhood,
+        "country": _clean_place(body.country),
+        "location_updated_at": now_utc(),
+    }
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
+    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    return {"user": public_user(fresh, private=True)}
+
+
 async def _books_for(owner_id: str, only_available: bool = False):
     q = {"owner_id": owner_id, "deleted_at": None}
     if only_available:
@@ -885,7 +954,7 @@ async def get_user(user_id: str, user: dict = Depends(get_current_user)):
         r["rater_name"] = rater.get("name") if rater else "Someone"
         r["rater_avatar"] = rater.get("avatar_url") if rater else None
     pu = public_user(u, private=(user_id == user["user_id"]))
-    pu["distance_km"] = haversine_km(user.get("lat"), user.get("lng"), u.get("lat"), u.get("lng"))
+    pu["distance_km"] = user_distance_km(user, u)
     books = await _books_for(user_id)
     pu.update(match_info(user, u, {b["genre"] for b in books if b["status"] == "Available"}))
     return {"user": pu, "books": books, "reviews": ratings}
@@ -969,7 +1038,7 @@ async def get_book(book_id: str, user: dict = Depends(get_current_user)):
     owner = await db.users.find_one({"user_id": b["owner_id"], "deleted_at": None}, {"_id": 0})
     ownerp = public_user(owner) if owner else {}
     if owner:
-        ownerp["distance_km"] = haversine_km(user.get("lat"), user.get("lng"), owner.get("lat"), owner.get("lng"))
+        ownerp["distance_km"] = user_distance_km(user, owner)
     is_owner = b["owner_id"] == user["user_id"]
     wanted_by = 0
     if is_owner and b.get("status") == "Available":
@@ -988,8 +1057,8 @@ async def _nearby_readers(user: dict) -> List[dict]:
     ).to_list(500)
     out = []
     for p in people:
-        dist = haversine_km(user.get("lat"), user.get("lng"), p.get("lat"), p.get("lng"))
-        if dist <= DEMAND_RADIUS_KM or dist == 999.0:
+        dist = user_distance_km(user, p)
+        if dist <= DEMAND_RADIUS_KM or dist == UNKNOWN_DISTANCE_KM:
             p["distance_km"] = dist
             out.append(p)
     return out
@@ -1023,6 +1092,7 @@ async def books_demand(user: dict = Depends(get_current_user)):
 LANG_CODE_MAP = {
     "eng": "English", "ita": "Italian", "spa": "Spanish", "fre": "French",
     "fra": "French", "ger": "German", "deu": "German", "ara": "Arabic", "por": "Portuguese",
+    "rus": "Russian", "uzb": "Uzbek",
 }
 
 
@@ -1098,6 +1168,10 @@ async def delete_book(book_id: str, user: dict = Depends(get_current_user)):
 # ----------------------------------------------------------------------------
 # Discover
 # ----------------------------------------------------------------------------
+DISCOVER_CANDIDATE_LIMIT = 5000
+DISCOVER_RESULT_LIMIT = 200
+
+
 @api.get("/discover/people")
 async def discover_people(
     search: Optional[str] = None,
@@ -1116,20 +1190,34 @@ async def discover_people(
         q["languages"] = language
     if search:
         q["name"] = {"$regex": re.escape(search), "$options": "i"}
-    people = await db.users.find(q, {"_id": 0}).to_list(200)
-    result = []
+    # Filter by distance and rank over ALL matching readers before truncating; capping the query
+    # first returned an arbitrary 200 and could drop the nearest readers entirely.
+    people = await db.users.find(q, {"_id": 0}).to_list(DISCOVER_CANDIDATE_LIMIT)
+    candidates = []
     for p in people:
-        pu = public_user(p)
-        dist = haversine_km(user.get("lat"), user.get("lng"), p.get("lat"), p.get("lng"))
-        if max_distance is not None and dist > max_distance and dist != 999.0:
+        dist = user_distance_km(user, p)
+        if max_distance is not None and dist > max_distance and dist != UNKNOWN_DISTANCE_KM:
             continue
+        candidates.append((p, dist))
+    shelves: dict = {}
+    if candidates:
+        books = await db.books.find(
+            {"owner_id": {"$in": [p["user_id"] for p, _ in candidates]}, "status": "Available", "deleted_at": None},
+            {"_id": 0},
+        ).sort("created_at", -1).to_list(None)
+        for b in books:
+            shelves.setdefault(b["owner_id"], []).append(clean_book(b))
+    result = []
+    for p, dist in candidates:
+        pu = public_user(p)
         pu["distance_km"] = dist
-        pu["books"] = (await _books_for(p["user_id"], only_available=True))[:6]
+        pu["books"] = shelves.get(p["user_id"], [])[:6]
         pu["available_count"] = len(pu["books"])
         pu.update(match_info(user, p, {b["genre"] for b in pu["books"]}))
         result.append(pu)
     # Genre matches first, then closest.
     result.sort(key=lambda x: (-x["match_score"], x["distance_km"]))
+    result = result[:DISCOVER_RESULT_LIMIT]
     top_matches = [p for p in result if p["match_score"] > 0][:6]
     return {"people": result, "top_matches": top_matches}
 
@@ -1159,9 +1247,7 @@ async def discover_books(
         cb = clean_book(b)
         cb["owner_name"] = owner.get("name") if owner else ""
         cb["owner_avatar"] = owner.get("avatar_url") if owner else None
-        cb["distance_km"] = haversine_km(
-            user.get("lat"), user.get("lng"), owner.get("lat") if owner else None, owner.get("lng") if owner else None
-        )
+        cb["distance_km"] = user_distance_km(user, owner)
         out.append(cb)
     return {"books": out}
 
@@ -1189,8 +1275,8 @@ async def wishlist(max_distance: float = 25.0, user: dict = Depends(get_current_
     others = await db.users.find({"deleted_at": None, "user_id": {"$ne": user["user_id"]}}, {"_id": 0}).to_list(500)
     owners: dict = {}
     for o in others:
-        dist = haversine_km(user.get("lat"), user.get("lng"), o.get("lat"), o.get("lng"))
-        if dist > max_distance and dist != 999.0:
+        dist = user_distance_km(user, o)
+        if dist > max_distance and dist != UNKNOWN_DISTANCE_KM:
             continue
         o["distance_km"] = dist
         owners[o["user_id"]] = o
@@ -1232,6 +1318,8 @@ async def wishlist(max_distance: float = 25.0, user: dict = Depends(get_current_
 # ----------------------------------------------------------------------------
 # Map
 # ----------------------------------------------------------------------------
+# Fixed coordinates of the seeded demo community's neighborhoods (demo data only — real users'
+# locations come from their devices).
 NEIGHBORHOODS = {
     "Centro": (38.1938, 15.5540),
     "University Area": (38.2490, 15.5560),
@@ -1241,38 +1329,63 @@ NEIGHBORHOODS = {
     "Provinciale": (38.1850, 15.5450),
 }
 
+# Cluster centers are rounded to 2 decimals (~1 km) so a small cluster never pinpoints a reader.
+CLUSTER_CENTER_DECIMALS = 2
+
 
 @api.get("/map/clusters")
 async def map_clusters(user: dict = Depends(get_current_user)):
+    """Exchanging readers grouped by the area their device reported (neighborhood, else city).
+    Readers without a real location are left off the map. Totals count readers within
+    DEMAND_RADIUS_KM of the viewer when the viewer's own location is known, otherwise everyone."""
+    people = await db.users.find({"is_exchanging": True, "deleted_at": None}, {"_id": 0}).to_list(5000)
+    groups: dict = {}
+    for p in people:
+        if not has_location(p):
+            continue
+        city = p.get("city") or ""
+        label = p.get("neighborhood") or city
+        if not label:
+            continue
+        g = groups.setdefault((city.casefold(), label.casefold()), {"label": label, "city": city or None, "people": []})
+        g["people"].append(p)
+
+    viewer_located = has_location(user)
     clusters = []
     total_people = 0
     total_books = 0
-    for name, (lat, lng) in NEIGHBORHOODS.items():
-        people = await db.users.find(
-            {"neighborhood": name, "is_exchanging": True, "deleted_at": None}, {"_id": 0}
-        ).to_list(500)
-        pcount = len(people)
-        ids = [p["user_id"] for p in people]
-        bcount = await db.books.count_documents(
-            {"owner_id": {"$in": ids}, "status": "Available", "deleted_at": None}
-        ) if ids else 0
-        genre_counts = {}
-        for p in people:
-            for g in p.get("genres", []):
-                genre_counts[g] = genre_counts.get(g, 0) + 1
+    for g in groups.values():
+        members = g["people"]
+        ids = [m["user_id"] for m in members]
+        bcount = await db.books.count_documents({"owner_id": {"$in": ids}, "status": "Available", "deleted_at": None})
+        genre_counts: dict = {}
+        for m in members:
+            for genre in m.get("genres", []):
+                genre_counts[genre] = genre_counts.get(genre, 0) + 1
         top = sorted(genre_counts.items(), key=lambda x: -x[1])[:4]
+        lat = round(sum(m["lat"] for m in members) / len(members), CLUSTER_CENTER_DECIMALS)
+        lng = round(sum(m["lng"] for m in members) / len(members), CLUSTER_CENTER_DECIMALS)
+        cluster_id = hashlib.sha1(f"{g['city']}|{g['label']}".casefold().encode()).hexdigest()[:12]
         clusters.append(
             {
-                "neighborhood": name,
+                "id": cluster_id,
+                "neighborhood": g["label"],
+                "city": g["city"],
                 "lat": lat,
                 "lng": lng,
-                "people_count": pcount,
+                "people_count": len(members),
                 "books_count": bcount,
-                "top_genres": [g for g, _ in top],
+                "top_genres": [name for name, _ in top],
             }
         )
-        total_people += pcount
-        total_books += bcount
+        nearby = [m for m in members if m["user_id"] != user["user_id"]]
+        if viewer_located:
+            nearby = [m for m in nearby if user_distance_km(user, m) <= DEMAND_RADIUS_KM]
+        if nearby:
+            total_people += len(nearby)
+            total_books += await db.books.count_documents(
+                {"owner_id": {"$in": [m["user_id"] for m in nearby]}, "status": "Available", "deleted_at": None}
+            )
     clusters.sort(key=lambda c: -c["people_count"])
     return {"clusters": clusters, "total_active": total_people, "total_books": total_books}
 
@@ -1289,6 +1402,7 @@ async def _add_message(
     image_url: str = None,
     key: Optional[str] = None,
     params: Optional[dict] = None,
+    client_id: Optional[str] = None,
 ):
     """Store a chat message. System/proposal messages also carry an i18n `key` + `params` so each
     client renders them in its own language; `text` stays as the English fallback for old clients
@@ -1305,6 +1419,8 @@ async def _add_message(
         "image_url": image_url,
         "created_at": now_utc(),
     }
+    if client_id:
+        msg["client_id"] = client_id
     await db.messages.insert_one(dict(msg))
     if mtype == "image":
         last, last_key, last_params = "📷 Photo", "swapChat.sys.photo", {}
@@ -1333,7 +1449,7 @@ def clean_swap(s: dict) -> dict:
         "receiver_completed": s.get("receiver_completed", False),
         "requester_rated": s.get("requester_rated", False),
         "receiver_rated": s.get("receiver_rated", False),
-        "active_proposal": s.get("active_proposal"),
+        "active_proposal": dict(s["active_proposal"]) if s.get("active_proposal") else None,
         "updated_at": s.get("updated_at").isoformat() if s.get("updated_at") else None,
     }
 
@@ -1393,40 +1509,92 @@ async def list_swaps(user: dict = Depends(get_current_user)):
     swaps = await db.swaps.find(
         {"$or": [{"requester_id": uid}, {"receiver_id": uid}]}, {"_id": 0}
     ).sort("updated_at", -1).to_list(300)
+    other_ids = {s["receiver_id"] if s["requester_id"] == uid else s["requester_id"] for s in swaps}
+    others = {u["user_id"]: u for u in await db.users.find({"user_id": {"$in": list(other_ids)}}, {"_id": 0}).to_list(None)}
+    # Every swap lands in exactly one bucket, decided by its status alone:
+    #   pending            -> incoming (I received it) / outgoing (I sent it)
+    #   accepted / active  -> active
+    #   completed, declined, cancelled -> completed (the "Done" history; each row shows its status)
     buckets = {"incoming": [], "outgoing": [], "active": [], "completed": []}
     for s in swaps:
-        meta = await _swap_with_meta(s, uid)
-        if s["status"] == "pending":
-            if s["receiver_id"] == uid:
-                buckets["incoming"].append(meta)
-            else:
-                buckets["outgoing"].append(meta)
-        elif s["status"] in ("accepted", "active"):
+        meta = clean_swap(s)
+        other = others.get(s["receiver_id"] if s["requester_id"] == uid else s["requester_id"])
+        meta["other_user"] = public_user(other) if other else {}
+        meta["is_requester"] = s["requester_id"] == uid
+        status = s["status"]
+        if status == "pending":
+            buckets["incoming" if s["receiver_id"] == uid else "outgoing"].append(meta)
+        elif status in OPEN_ACTIVE_STATUSES:
             buckets["active"].append(meta)
-        elif s["status"] == "completed":
+        elif status in CLOSED_STATUSES:
             buckets["completed"].append(meta)
     return buckets
 
 
+OPEN_ACTIVE_STATUSES = ("accepted", "active")
+CLOSED_STATUSES = ("completed", "declined", "cancelled")
+
+
+@api.get("/swaps/with/{user_id}")
+async def swap_with_user(user_id: str, user: dict = Depends(get_current_user)):
+    """The caller's open swap with this reader (pending/accepted/active), if any, and their most
+    recent swap of any status. Lets the app open an existing conversation instead of silently
+    starting a new request after a swap has finished."""
+    uid = user["user_id"]
+    pair = {"$or": [{"requester_id": uid, "receiver_id": user_id}, {"requester_id": user_id, "receiver_id": uid}]}
+    open_swap = await db.swaps.find_one({**pair, "status": {"$in": ["pending", *OPEN_ACTIVE_STATUSES]}}, {"_id": 0})
+    latest = await db.swaps.find_one(pair, {"_id": 0}, sort=[("updated_at", -1)])
+    return {
+        "open": await _swap_with_meta(open_swap, uid) if open_swap else None,
+        "latest": await _swap_with_meta(latest, uid) if latest else None,
+    }
+
+
+async def _proposal_books(proposals: List[dict]) -> None:
+    """Attach the two books of each proposal as `offered` / `requested` (what the chat renders), with
+    one query for all of them. A book that no longer exists at all becomes None ("Book unavailable");
+    a soft-deleted one keeps its title, since the proposal really was about that book."""
+    ids = {p.get(k) for p in proposals for k in ("offered_book_id", "requested_book_id") if p.get(k)}
+    books = {b["id"]: clean_book(b) for b in await db.books.find({"id": {"$in": list(ids)}}, {"_id": 0}).to_list(None)} if ids else {}
+    for p in proposals:
+        p["offered"] = books.get(p.get("offered_book_id"))
+        p["requested"] = books.get(p.get("requested_book_id"))
+
+
 @api.get("/swaps/{swap_id}")
-async def get_swap(swap_id: str, user: dict = Depends(get_current_user)):
+async def get_swap(swap_id: str, after: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """The conversation. With `after=<message id>` (the app's polling), only messages newer than that
+    one are returned, plus the swap itself; `full` tells the app whether `messages` is the whole
+    conversation or just the new tail."""
     s = await db.swaps.find_one({"id": swap_id}, {"_id": 0})
     if not s or user["user_id"] not in (s["requester_id"], s["receiver_id"]):
         raise HTTPException(status_code=404, detail="Swap not found")
     meta = await _swap_with_meta(s, user["user_id"])
-    msgs = await db.messages.find({"swap_id": swap_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    q: dict = {"swap_id": swap_id}
+    full = True
+    if after:
+        anchor = await db.messages.find_one({"id": after, "swap_id": swap_id}, {"_id": 0, "created_at": 1})
+        if anchor:
+            # $gte, not $gt: messages written in the same millisecond as the anchor must not be skipped.
+            # The anchor itself comes back too; the app merges by message id.
+            q["created_at"] = {"$gte": anchor["created_at"]}
+            full = False
+    msgs = await db.messages.find(q, {"_id": 0}).sort("created_at", 1).to_list(500)
     for m in msgs:
         m["created_at"] = m["created_at"].isoformat() if m.get("created_at") else None
-        if m.get("proposal"):
-            for k in ("offered_book_id", "requested_book_id"):
-                bid = m["proposal"].get(k)
-                if bid:
-                    bk = await db.books.find_one({"id": bid}, {"_id": 0})
-                    m["proposal"][k.replace("_id", "")] = clean_book(bk) if bk else None
-    other_id = s["receiver_id"] if s["requester_id"] == user["user_id"] else s["requester_id"]
-    my_books = await _books_for(user["user_id"], only_available=True)
-    their_books = await _books_for(other_id, only_available=True)
-    return {"swap": meta, "messages": msgs, "my_books": my_books, "their_books": their_books}
+    await _proposal_books([m["proposal"] for m in msgs if m.get("proposal")])
+    if meta.get("active_proposal"):
+        await _proposal_books([meta["active_proposal"]])
+    out = {"swap": meta, "messages": msgs, "full": full}
+    # Shelves are only needed to make a proposal (pending swaps), and not on every poll.
+    if full:
+        other_id = s["receiver_id"] if s["requester_id"] == user["user_id"] else s["requester_id"]
+        if s["status"] == "pending":
+            out["my_books"] = await _books_for(user["user_id"], only_available=True)
+            out["their_books"] = await _books_for(other_id, only_available=True)
+        else:
+            out["my_books"], out["their_books"] = [], []
+    return out
 
 
 async def _participant_swap(swap_id: str, user: dict) -> dict:
@@ -1461,8 +1629,15 @@ async def send_message(swap_id: str, body: MessageBody, user: dict = Depends(get
     _require_status(s, "pending", "accepted", "active", "completed")
     if not body.text.strip() and not body.image_url:
         raise HTTPException(status_code=400, detail="Empty message")
+    if body.client_id:
+        prior = await db.messages.find_one(
+            {"swap_id": swap_id, "sender_id": user["user_id"], "client_id": body.client_id}, {"_id": 0}
+        )
+        if prior:  # the same send retried: return the original, never store it twice
+            prior["created_at"] = prior["created_at"].isoformat()
+            return {"message": prior, "duplicate": True}
     mtype = "image" if body.image_url else "text"
-    msg = await _add_message(swap_id, user["user_id"], mtype, body.text, image_url=body.image_url)
+    msg = await _add_message(swap_id, user["user_id"], mtype, body.text, image_url=body.image_url, client_id=body.client_id)
     msg["created_at"] = msg["created_at"].isoformat()
     return {"message": msg}
 
@@ -1752,11 +1927,12 @@ async def startup():
     await db.books.create_index("owner_id")
     await db.swaps.create_index("requester_id")
     await db.swaps.create_index("receiver_id")
+    # Chat loads and polls read one swap's messages in time order.
+    await db.messages.create_index([("swap_id", 1), ("created_at", 1)])
     await run_in_threadpool(init_storage)
     logger.info(f"File storage: {STORAGE_DIR}")
     try:
-        await seed_demo()
-        await backfill_seed_interests()
+        await sync_demo_community()
         await backfill_onboarding_state()
     except Exception as e:
         logger.warning(f"Seed failed: {e}")
@@ -1768,30 +1944,290 @@ async def shutdown():
 
 
 # ----------------------------------------------------------------------------
-# Seed demo Messina community
+# Demo community (seeded Messina readers)
 # ----------------------------------------------------------------------------
+# Demo accounts are identified by ALL of: seed=True, an "@demo.bookloop" email and no password (nobody
+# can sign in as them). Real sign-ups never get any of these. Everything the demo community owns —
+# books, completed swaps and reviews — also carries seed=True, and demo swaps/reviews only ever
+# involve two demo users, so real users never receive fake reviews.
+DEMO_EMAIL_DOMAIN = "@demo.bookloop"
+
+
 def cover(isbn: str) -> str:
     return f"https://covers.openlibrary.org/b/isbn/{isbn}-L.jpg"
 
 
-SEED_INTERESTS = {
-    "Maria Rossi": ["Thrillers", "Classics", "Book club picks"],
-    "Luca Bianchi": ["University texts", "Non-fiction deep dives", "Bestsellers"],
-    "Laura Conti": ["Bestsellers", "Book club picks", "Short reads"],
-    "Ahmed Hassan": ["Classics", "Non-fiction deep dives", "Poetry"],
-    "Giulia Marino": ["Italian authors", "Bestsellers", "Short reads"],
-    "Marco De Luca": ["University texts", "Non-fiction deep dives"],
-    "Sofia Greco": ["Italian authors", "Classics", "Graphic novels"],
-    "Antonio Ferrara": ["Classics", "Italian authors", "Poetry"],
-}
+def _demo_email(name: str) -> str:
+    first, second = name.split()[:2]
+    return f"{first.lower()}.{second.lower()}{DEMO_EMAIL_DOMAIN}"
 
 
-async def backfill_seed_interests():
-    for name, interests in SEED_INTERESTS.items():
-        await db.users.update_one(
-            {"name": name, "seed": True, "reading_interests": {"$exists": False}},
-            {"$set": {"reading_interests": interests}},
+def _demo_jitter(name: str) -> tuple:
+    """Stable small offset (±0.005°) so demo readers in one neighborhood don't share a point."""
+    h = hashlib.sha1(name.encode()).digest()
+    return ((h[0] % 20 - 10) / 2000.0, (h[1] % 20 - 10) / 2000.0)
+
+
+_FEM = "https://images.unsplash.com/photo-1514355315815-2b64b0216b14?crop=entropy&cs=srgb&fm=jpg&w=400&q=80"
+_MALE = "https://images.unsplash.com/photo-1525457136159-8878648a7ad0?crop=entropy&cs=srgb&fm=jpg&w=400&q=80"
+_FEM2 = "https://images.unsplash.com/photo-1544005313-94ddf0286df2?crop=entropy&cs=srgb&fm=jpg&w=400&q=80"
+_MALE2 = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?crop=entropy&cs=srgb&fm=jpg&w=400&q=80"
+_FEM3 = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?crop=entropy&cs=srgb&fm=jpg&w=400&q=80"
+
+# Exactly 10 demo readers. "swaps" is the number of completed swaps each one has; the swaps
+# themselves are generated between demo readers (see _demo_swap_pairs), and reviews only come from
+# those swaps, so a demo reader's review count can never exceed their completed swaps.
+DEMO_USERS = [
+    {
+        "name": "Maria Rossi", "avatar": _FEM, "nb": "Centro", "swaps": 12,
+        "genres": ["Fiction", "Psychology", "History"], "langs": ["Italian", "English"],
+        "interests": ["Thrillers", "Classics", "Book club picks"],
+        "bio": "Literature student. Love a good psychological thriller and Sunday reading in the park.",
+        "books": [
+            ("Atomic Habits", "James Clear", "9780735211292", "Self-development", "English", "Good"),
+            ("Sapiens", "Yuval Noah Harari", "9780062316097", "History", "English", "Like New"),
+            ("Norwegian Wood", "Haruki Murakami", "9780375704024", "Fiction", "English", "Good"),
+            ("The Silent Patient", "Alex Michaelides", "9781250301697", "Fiction", "English", "Good"),
+        ],
+    },
+    {
+        "name": "Luca Bianchi", "avatar": _MALE, "nb": "University Area", "swaps": 8,
+        "genres": ["Business", "Science", "Self-development"], "langs": ["Italian", "English"],
+        "interests": ["University texts", "Non-fiction deep dives", "Bestsellers"],
+        "bio": "Engineering @ UniMe. Trading business & science reads for good fiction.",
+        "books": [
+            ("Thinking, Fast and Slow", "Daniel Kahneman", "9780374533557", "Psychology", "English", "Good"),
+            ("Dune", "Frank Herbert", "9780441013593", "Fantasy", "English", "Acceptable"),
+            ("Zero to One", "Peter Thiel", "9780804139298", "Business", "English", "Like New"),
+        ],
+    },
+    {
+        "name": "Laura Conti", "avatar": _FEM2, "nb": "Annunziata", "swaps": 14,
+        "genres": ["Fantasy", "Romance", "Fiction"], "langs": ["Italian", "English", "Spanish"],
+        "interests": ["Bestsellers", "Book club picks", "Short reads"],
+        "bio": "Fantasy addict & Erasmus mentor. Always up for a book chat over coffee.",
+        "books": [
+            ("Harry Potter and the Sorcerer's Stone", "J.K. Rowling", "9780590353427", "Fantasy", "English", "Good"),
+            ("The Alchemist", "Paulo Coelho", "9780061122415", "Fiction", "English", "Good"),
+            ("1984", "George Orwell", "9780451524935", "Fiction", "English", "Like New"),
+            ("The Midnight Library", "Matt Haig", "9780525559474", "Fiction", "English", "Good"),
+        ],
+    },
+    {
+        "name": "Ahmed Hassan", "avatar": _MALE2, "nb": "Giostra", "swaps": 6,
+        "genres": ["History", "Philosophy", "Biography"], "langs": ["English", "Arabic"],
+        "interests": ["Classics", "Non-fiction deep dives", "Poetry"],
+        "bio": "History buff & PhD candidate. Big on biographies and philosophy.",
+        "books": [
+            ("Man's Search for Meaning", "Viktor Frankl", "9780807014271", "Philosophy", "English", "Good"),
+            ("Educated", "Tara Westover", "9780399590504", "Biography", "English", "Like New"),
+            ("Meditations", "Marcus Aurelius", "9780140449334", "Philosophy", "English", "Acceptable"),
+        ],
+    },
+    {
+        "name": "Giulia Marino", "avatar": _FEM3, "nb": "Centro", "swaps": 5,
+        "genres": ["Romance", "Fiction", "Psychology"], "langs": ["Italian"],
+        "interests": ["Italian authors", "Bestsellers", "Short reads"],
+        "bio": "Romance & contemporary fiction lover. Messina born and raised.",
+        "books": [
+            ("It Ends with Us", "Colleen Hoover", "9781501110368", "Romance", "English", "Good"),
+            ("Where the Crawdads Sing", "Delia Owens", "9780735219090", "Fiction", "English", "Good"),
+        ],
+    },
+    {
+        "name": "Marco De Luca", "avatar": _MALE, "nb": "University Area", "swaps": 9,
+        "genres": ["Science", "Business", "History"], "langs": ["Italian", "English"],
+        "interests": ["University texts", "Non-fiction deep dives"],
+        "bio": "Physics student. Trading science and business books near campus.",
+        "books": [
+            ("A Brief History of Time", "Stephen Hawking", "9780553380163", "Science", "English", "Good"),
+            ("The Lean Startup", "Eric Ries", "9780307887894", "Business", "English", "Like New"),
+        ],
+    },
+    {
+        "name": "Sofia Greco", "avatar": _FEM, "nb": "Annunziata", "swaps": 7,
+        "genres": ["Fiction", "Fantasy", "Self-development"], "langs": ["Italian", "English", "French"],
+        "interests": ["Italian authors", "Classics", "Graphic novels"],
+        "bio": "Erasmus from France. Building my Italian one novel at a time.",
+        "books": [
+            ("The Name of the Wind", "Patrick Rothfuss", "9780756404741", "Fantasy", "English", "Good"),
+            ("Deep Work", "Cal Newport", "9781455586691", "Self-development", "English", "Good"),
+        ],
+    },
+    {
+        "name": "Antonio Ferrara", "avatar": _MALE2, "nb": "Provinciale", "swaps": 4,
+        "genres": ["History", "Biography"], "langs": ["Italian"],
+        "interests": ["Classics", "Italian authors", "Poetry"],
+        "bio": "Retired teacher with a big home library to share.",
+        "books": [
+            ("Steve Jobs", "Walter Isaacson", "9781451648539", "Biography", "English", "Good"),
+            ("Guns, Germs, and Steel", "Jared Diamond", "9780393317558", "History", "English", "Acceptable"),
+        ],
+    },
+    {
+        "name": "Elena Russo", "avatar": _FEM2, "nb": "Tremestieri", "swaps": 3,
+        "genres": ["Fiction", "Philosophy", "Romance"], "langs": ["Italian", "English"],
+        "interests": ["Short reads", "Poetry", "Book club picks"],
+        "bio": "Nurse on night shifts — short novels and poetry keep me company.",
+        "books": [
+            ("The Little Prince", "Antoine de Saint-Exupéry", "9780156012195", "Fiction", "English", "Good"),
+            ("Pride and Prejudice", "Jane Austen", "9780141439518", "Romance", "English", "Acceptable"),
+        ],
+    },
+    {
+        "name": "Davide Romano", "avatar": _MALE, "nb": "Centro", "swaps": 2,
+        "genres": ["Science", "Fantasy", "Self-development"], "langs": ["Italian", "English"],
+        "interests": ["Bestsellers", "Graphic novels"],
+        "bio": "New to Messina and to book swapping. Sci-fi first, everything else second.",
+        "books": [
+            ("The Martian", "Andy Weir", "9780553418026", "Science", "English", "Like New"),
+            ("Ready Player One", "Ernest Cline", "9780307887443", "Fantasy", "English", "Good"),
+        ],
+    },
+]
+
+DEMO_REVIEWS = [
+    "Lovely swap — the book was exactly as described.",
+    "Friendly and on time. Would swap again!",
+    "Great recommendations over coffee, thanks!",
+    "Book in even better condition than listed.",
+    "Easy to arrange and very kind.",
+    "Quick replies and a smooth meetup.",
+    "Such a good read, thank you for bringing it.",
+    "Punctual, polite and a true book lover.",
+    "Second swap with them, just as easy as the first.",
+    "Wrapped the book carefully — really appreciated it.",
+]
+
+
+def _demo_swap_pairs() -> List[tuple]:
+    """Deterministically pairs demo readers into completed swaps so each ends up with exactly the
+    number of swaps in DEMO_USERS: repeatedly give the reader with the most swaps left a partner from
+    those with the most left, preferring partners they have swapped with least."""
+    remaining = {d["name"]: d["swaps"] for d in DEMO_USERS}
+    assert sum(remaining.values()) % 2 == 0, "demo swap counts must sum to an even number"
+    order = {d["name"]: i for i, d in enumerate(DEMO_USERS)}
+    together: dict = {}
+    pairs = []
+    while any(remaining.values()):
+        a = max(remaining, key=lambda n: (remaining[n], -order[n]))
+        others = [n for n in remaining if n != a and remaining[n] > 0]
+        b = max(others, key=lambda n: (remaining[n], -together.get(frozenset((a, n)), 0), -order[n]))
+        pairs.append((a, b))
+        together[frozenset((a, b))] = together.get(frozenset((a, b)), 0) + 1
+        remaining[a] -= 1
+        remaining[b] -= 1
+    return pairs
+
+
+async def sync_demo_community():
+    """Idempotently brings the demo community to exactly DEMO_USERS: creates missing demo readers,
+    removes demo readers beyond those 10, and (re)builds their completed swaps and reviews so every
+    count shown in the app is backed by real records. Only documents with seed=True are touched."""
+    wanted = {_demo_email(d["name"]): d for d in DEMO_USERS}
+    demo_filter = {"seed": True, "email": {"$regex": re.escape(DEMO_EMAIL_DOMAIN) + "$"}, "password_hash": None}
+
+    # 1. Demo readers beyond the 10: remove them and the demo data they own.
+    extras = await db.users.find({**demo_filter, "email": {"$regex": demo_filter["email"]["$regex"], "$nin": list(wanted)}}, {"_id": 0}).to_list(10000)
+    for extra in extras:
+        uid = extra["user_id"]
+        await db.books.delete_many({"owner_id": uid, "seed": True})
+        await db.ratings.delete_many({"seed": True, "$or": [{"rater_id": uid}, {"ratee_id": uid}]})
+        await db.swaps.delete_many({"seed": True, "$or": [{"requester_id": uid}, {"receiver_id": uid}]})
+        await db.users.delete_one({"user_id": uid, "seed": True, "password_hash": None})
+        logger.info(f"Removed extra demo reader {extra.get('name')} <{extra.get('email')}>")
+
+    # 2. The 10 demo readers and their shelves.
+    ids: dict = {}
+    for email, d in wanted.items():
+        existing = await db.users.find_one({"email": email}, {"_id": 0})
+        if existing and not existing.get("seed"):
+            logger.warning(f"Skipping demo reader {email}: a non-demo account uses that email")
+            continue
+        profile = {
+            "name": d["name"], "avatar_url": d["avatar"], "bio": d["bio"], "city": "Messina",
+            "neighborhood": d["nb"], "genres": d["genres"], "languages": d["langs"],
+            "reading_interests": d["interests"], "is_exchanging": True,
+        }
+        if existing:
+            uid = existing["user_id"]
+            await db.users.update_one({"user_id": uid, "seed": True}, {"$set": profile})
+        else:
+            uid = new_id("user")
+            lat, lng = NEIGHBORHOODS[d["nb"]]
+            dlat, dlng = _demo_jitter(d["name"])
+            await db.users.insert_one({
+                "user_id": uid, "email": email, "password_hash": None, **profile,
+                "lat": lat + dlat, "lng": lng + dlng, "rating": 0.0, "rating_count": 0, "swaps_count": 0,
+                "onboarding_completed": True, "created_at": now_utc(), "deleted_at": None, "seed": True,
+            })
+        ids[d["name"]] = uid
+        for (title, author, isbn, genre, lang, cond) in d["books"]:
+            if not await db.books.find_one({"owner_id": uid, "title": title, "seed": True}):
+                await db.books.insert_one({
+                    "id": new_id("book"), "owner_id": uid, "title": title, "author": author,
+                    "cover_url": cover(isbn), "condition": cond, "language": lang, "genre": genre,
+                    "status": "Available", "created_at": now_utc(), "deleted_at": None, "seed": True,
+                })
+
+    # 3. Completed swaps between demo readers, and the reviews those swaps produced.
+    now = now_utc()
+    swap_ids, rating_ids = [], []
+    for i, (a, b) in enumerate(_demo_swap_pairs()):
+        if a not in ids or b not in ids:
+            continue
+        swap_id = f"swap_demo_{i:03d}"
+        requester_rates = i % 4 != 3
+        receiver_rates = i % 3 != 2
+        done_at = now - timedelta(days=4 + i * 5)
+        swap_ids.append(swap_id)
+        await db.swaps.update_one(
+            {"id": swap_id},
+            {
+                "$set": {
+                    "requester_id": ids[a], "receiver_id": ids[b], "status": "completed",
+                    "requester_completed": True, "receiver_completed": True,
+                    "requester_rated": requester_rates, "receiver_rated": receiver_rates,
+                    "active_proposal": None, "last_message": "", "seed": True,
+                },
+                "$setOnInsert": {"created_at": done_at - timedelta(days=2), "updated_at": done_at},
+            },
+            upsert=True,
         )
+        for direction, (rater, ratee, rates) in enumerate(((a, b, requester_rates), (b, a, receiver_rates))):
+            if not rates:
+                continue
+            rating_id = f"rate_demo_{i:03d}_{direction}"
+            rating_ids.append(rating_id)
+            await db.ratings.update_one(
+                {"id": rating_id},
+                {
+                    "$set": {
+                        "swap_id": swap_id, "rater_id": ids[rater], "ratee_id": ids[ratee],
+                        "stars": 4 if (i * 7 + direction) % 5 == 0 else 5,
+                        "review": DEMO_REVIEWS[(i * 3 + direction) % len(DEMO_REVIEWS)], "seed": True,
+                    },
+                    "$setOnInsert": {"created_at": done_at + timedelta(hours=6 + direction * 5)},
+                },
+                upsert=True,
+            )
+    await db.swaps.delete_many({"seed": True, "id": {"$regex": "^swap_demo_", "$nin": swap_ids}})
+    await db.ratings.delete_many({"seed": True, "id": {"$regex": "^rate_demo_", "$nin": rating_ids}})
+
+    # 4. Counts come from the records above, never from hardcoded numbers.
+    for name, uid in ids.items():
+        swaps = await db.swaps.count_documents(
+            {"status": "completed", "$or": [{"requester_id": uid}, {"receiver_id": uid}]}
+        )
+        received = await db.ratings.find({"ratee_id": uid}, {"_id": 0, "stars": 1}).to_list(1000)
+        avg = round(sum(r["stars"] for r in received) / len(received), 1) if received else 0.0
+        if len(received) > swaps:
+            logger.warning(f"Demo reader {name} has {len(received)} reviews but {swaps} completed swaps")
+        await db.users.update_one(
+            {"user_id": uid, "seed": True},
+            {"$set": {"swaps_count": swaps, "rating_count": len(received), "rating": avg}},
+        )
+    logger.info(f"Demo community in sync: {len(ids)} readers, {len(swap_ids)} swaps, {len(rating_ids)} reviews")
 
 
 async def backfill_onboarding_state():
@@ -1800,141 +2236,3 @@ async def backfill_onboarding_state():
     await db.users.update_many(
         {"onboarding_completed": {"$exists": False}}, {"$set": {"onboarding_completed": True}}
     )
-
-
-async def seed_demo():
-    if await db.users.count_documents({"seed": True}) > 0:
-        return
-    fem = "https://images.unsplash.com/photo-1514355315815-2b64b0216b14?crop=entropy&cs=srgb&fm=jpg&w=400&q=80"
-    male = "https://images.unsplash.com/photo-1525457136159-8878648a7ad0?crop=entropy&cs=srgb&fm=jpg&w=400&q=80"
-    fem2 = "https://images.unsplash.com/photo-1544005313-94ddf0286df2?crop=entropy&cs=srgb&fm=jpg&w=400&q=80"
-    male2 = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?crop=entropy&cs=srgb&fm=jpg&w=400&q=80"
-    fem3 = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?crop=entropy&cs=srgb&fm=jpg&w=400&q=80"
-
-    demo = [
-        {
-            "name": "Maria Rossi", "avatar": fem, "nb": "Centro", "rating": 4.9, "rc": 22, "swaps": 18,
-            "genres": ["Fiction", "Psychology", "History"], "langs": ["Italian", "English"],
-            "bio": "Literature student. Love a good psychological thriller and Sunday reading in the park.",
-            "books": [
-                ("Atomic Habits", "James Clear", "9780735211292", "Self-development", "English", "Good"),
-                ("Sapiens", "Yuval Noah Harari", "9780062316097", "History", "English", "Like New"),
-                ("Norwegian Wood", "Haruki Murakami", "9780375704024", "Fiction", "English", "Good"),
-                ("The Silent Patient", "Alex Michaelides", "9781250301697", "Fiction", "English", "Good"),
-            ],
-        },
-        {
-            "name": "Luca Bianchi", "avatar": male, "nb": "University Area", "rating": 4.8, "rc": 14, "swaps": 12,
-            "genres": ["Business", "Science", "Self-development"], "langs": ["Italian", "English"],
-            "bio": "Engineering @ UniMe. Trading business & science reads for good fiction.",
-            "books": [
-                ("Thinking, Fast and Slow", "Daniel Kahneman", "9780374533557", "Psychology", "English", "Good"),
-                ("Dune", "Frank Herbert", "9780441013593", "Fantasy", "English", "Acceptable"),
-                ("Zero to One", "Peter Thiel", "9780804139298", "Business", "English", "Like New"),
-            ],
-        },
-        {
-            "name": "Laura Conti", "avatar": fem2, "nb": "Annunziata", "rating": 5.0, "rc": 30, "swaps": 24,
-            "genres": ["Fantasy", "Romance", "Fiction"], "langs": ["Italian", "English", "Spanish"],
-            "bio": "Fantasy addict & Erasmus mentor. Always up for a book chat over coffee.",
-            "books": [
-                ("Harry Potter and the Sorcerer's Stone", "J.K. Rowling", "9780590353427", "Fantasy", "English", "Good"),
-                ("The Alchemist", "Paulo Coelho", "9780061122415", "Fiction", "English", "Good"),
-                ("1984", "George Orwell", "9780451524935", "Fiction", "English", "Like New"),
-                ("The Midnight Library", "Matt Haig", "9780525559474", "Fiction", "English", "Good"),
-            ],
-        },
-        {
-            "name": "Ahmed Hassan", "avatar": male2, "nb": "Giostra", "rating": 4.6, "rc": 11, "swaps": 9,
-            "genres": ["History", "Philosophy", "Biography"], "langs": ["English", "Arabic"],
-            "bio": "History buff & PhD candidate. Big on biographies and philosophy.",
-            "books": [
-                ("Man's Search for Meaning", "Viktor Frankl", "9780807014271", "Philosophy", "English", "Good"),
-                ("Educated", "Tara Westover", "9780399590504", "Biography", "English", "Like New"),
-                ("Meditations", "Marcus Aurelius", "9780140449334", "Philosophy", "English", "Acceptable"),
-            ],
-        },
-        {
-            "name": "Giulia Marino", "avatar": fem3, "nb": "Centro", "rating": 4.7, "rc": 9, "swaps": 7,
-            "genres": ["Romance", "Fiction", "Psychology"], "langs": ["Italian"],
-            "bio": "Romance & contemporary fiction lover. Messina born and raised.",
-            "books": [
-                ("It Ends with Us", "Colleen Hoover", "9781501110368", "Romance", "English", "Good"),
-                ("Where the Crawdads Sing", "Delia Owens", "9780735219090", "Fiction", "English", "Good"),
-            ],
-        },
-        {
-            "name": "Marco De Luca", "avatar": male, "nb": "University Area", "rating": 4.9, "rc": 16, "swaps": 15,
-            "genres": ["Science", "Business", "History"], "langs": ["Italian", "English"],
-            "bio": "Physics student. Trading science and business books near campus.",
-            "books": [
-                ("A Brief History of Time", "Stephen Hawking", "9780553380163", "Science", "English", "Good"),
-                ("The Lean Startup", "Eric Ries", "9780307887894", "Business", "English", "Like New"),
-            ],
-        },
-        {
-            "name": "Sofia Greco", "avatar": fem, "nb": "Annunziata", "rating": 4.8, "rc": 13, "swaps": 10,
-            "genres": ["Fiction", "Fantasy", "Self-development"], "langs": ["Italian", "English", "French"],
-            "bio": "Erasmus from France. Building my Italian one novel at a time.",
-            "books": [
-                ("The Name of the Wind", "Patrick Rothfuss", "9780756404741", "Fantasy", "English", "Good"),
-                ("Deep Work", "Cal Newport", "9781455586691", "Self-development", "English", "Good"),
-            ],
-        },
-        {
-            "name": "Antonio Ferrara", "avatar": male2, "nb": "Provinciale", "rating": 4.5, "rc": 6, "swaps": 5,
-            "genres": ["History", "Biography"], "langs": ["Italian"],
-            "bio": "Retired teacher with a big home library to share.",
-            "books": [
-                ("Steve Jobs", "Walter Isaacson", "9781451648539", "Biography", "English", "Good"),
-                ("Guns, Germs, and Steel", "Jared Diamond", "9780393317558", "History", "English", "Acceptable"),
-            ],
-        },
-    ]
-
-    for d in demo:
-        uid = new_id("user")
-        lat, lng = NEIGHBORHOODS[d["nb"]]
-        lat += (hash(d["name"]) % 20 - 10) / 2000.0
-        lng += (hash(d["name"][::-1]) % 20 - 10) / 2000.0
-        await db.users.insert_one(
-            {
-                "user_id": uid,
-                "email": f"{d['name'].split()[0].lower()}.{d['name'].split()[1].lower()}@demo.bookloop",
-                "password_hash": None,
-                "name": d["name"],
-                "avatar_url": d["avatar"],
-                "bio": d["bio"],
-                "city": "Messina",
-                "neighborhood": d["nb"],
-                "lat": lat,
-                "lng": lng,
-                "genres": d["genres"],
-                "languages": d["langs"],
-                "is_exchanging": True,
-                "rating": d["rating"],
-                "rating_count": d["rc"],
-                "swaps_count": d["swaps"],
-                "created_at": now_utc(),
-                "deleted_at": None,
-                "seed": True,
-            }
-        )
-        for (title, author, isbn, genre, lang, cond) in d["books"]:
-            await db.books.insert_one(
-                {
-                    "id": new_id("book"),
-                    "owner_id": uid,
-                    "title": title,
-                    "author": author,
-                    "cover_url": cover(isbn),
-                    "condition": cond,
-                    "language": lang,
-                    "genre": genre,
-                    "status": "Available",
-                    "created_at": now_utc(),
-                    "deleted_at": None,
-                    "seed": True,
-                }
-            )
-    logger.info("Seeded demo community")

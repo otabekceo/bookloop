@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { View, Pressable, StyleSheet, useWindowDimensions } from "react-native";
 import { Tabs, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -6,6 +7,7 @@ import { House, MapTrifold, Books, ArrowsClockwise, User, Plus } from "phosphor-
 
 import { AppText, haptic } from "@/src/components/ui";
 import { apiFetch } from "@/src/api";
+import { useDeviceLocation } from "@/src/location";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { useTheme } from "@/src/theme";
 
@@ -62,7 +64,10 @@ function CustomTabBar({ state, navigation }: any) {
         accessibilityState={{ selected: focused }}
         onPress={() => {
           haptic("selection");
-          if (!focused) navigation.navigate(route.name);
+          // Same contract as React Navigation's built-in tab bar: emit "tabPress" so a screen can react
+          // to a press on its own, already-focused tab (Discover resets to its main view on that).
+          const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
+          if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
         }}
         style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 3, paddingTop: 8, paddingHorizontal: 2 }}
       >
@@ -174,9 +179,20 @@ function AddBookFab() {
   );
 }
 
+/** Keeps an already-granted location fresh once per app session. Never shows the permission dialog:
+ * that only happens when the user opens a location feature (Map, or "Use my location"). */
+function LocationRefresher() {
+  const { refreshSilently } = useDeviceLocation();
+  useEffect(() => {
+    refreshSilently();
+  }, [refreshSilently]);
+  return null;
+}
+
 export default function TabsLayout() {
   return (
     <View style={{ flex: 1 }}>
+      <LocationRefresher />
       <Tabs tabBar={(props) => <CustomTabBar {...props} />} screenOptions={{ headerShown: false }}>
         <Tabs.Screen name="discover" />
         <Tabs.Screen name="map" />

@@ -11,14 +11,15 @@ export const GENRES = [
   "Science",
 ];
 
+// Reading/book languages offered in pickers: exactly BookLoop's five supported languages. Stored as
+// English names (the API matches on them); shown translated via enumLabel(t, "bookLanguage", …).
+// Values saved before this list changed (e.g. "Spanish") still display and can be deselected.
 export const LANGUAGES = [
-  "Italian",
+  "Uzbek",
   "English",
-  "Spanish",
-  "French",
-  "German",
+  "Russian",
+  "Italian",
   "Arabic",
-  "Portuguese",
 ];
 
 export const CONDITIONS = ["Like New", "Good", "Acceptable"];

@@ -73,7 +73,8 @@
     "continue": "Davom etish",
     "changeTitle": "Ilova tili",
     "changeSubtitle": "Butun ilova uchun tilni tanlang.",
-    "current": "Joriy til"
+    "current": "Joriy til",
+    "switching": "Til o'zgartirilmoqda…"
   },
   "auth": {
     "welcomeBack": "Xush kelibsiz",
@@ -92,7 +93,12 @@
     "alreadyHaveAccount": "Hisobingiz bormi? ",
     "fillAllFields": "Iltimos, barcha maydonlarni to'ldiring",
     "somethingWentWrong": "Xatolik yuz berdi",
-    "googleFailed": "Google orqali kirish amalga oshmadi"
+    "googleFailed": "Google orqali kirish amalga oshmadi",
+    "continue": "Davom etish",
+    "emailAlreadyRegistered": "Bu email bilan hisob allaqachon mavjud",
+    "stepAccount": "Hisob",
+    "stepVerify": "Tasdiqlash",
+    "stepPassword": "Parol"
   },
   "tabs": {
     "discover": "Kashf etish",
@@ -122,7 +128,6 @@
     "showResults": "Natijalarni ko'rsatish"
   },
   "map": {
-    "city": "Messina",
     "densityTitle": "Faol almashuvchilar zichligi",
     "readersNearby": "Yaqin atrofda {{count}} ishtiyoqmandlar",
     "readersNearby_plural": "Yaqin atrofda {{count}} ishtiyoqmandlar",
@@ -160,7 +165,11 @@
     "statusActive": "Faol",
     "statusCompleted": "Tugallangan",
     "statusDeclined": "Rad etilgan",
-    "statusCancelled": "Bekor qilingan"
+    "statusCancelled": "Bekor qilingan",
+    "previousTitle": "{{name}} bilan avval almashgansiz",
+    "previousBody": "{{name}} bilan oxirgi almashuv holati: {{status}}. O'sha suhbatni ochasizmi yoki yangi almashuv so'rovini boshlaysizmi?",
+    "openPrevious": "Oldingi suhbatni ochish",
+    "newRequest": "Yangi almashuv so'rovi"
   },
   "profile": {
     "currentlyExchanging": "Hozir almashmoqda",
@@ -186,7 +195,8 @@
     "nowExchanging": "Endi almashmoqdasiz",
     "exchangingPaused": "Almashuv to'xtatildi",
     "couldNotUpdate": "Yangilab bo'lmadi",
-    "inviteCopied": "Taklif havolasi nusxalandi"
+    "inviteCopied": "Taklif havolasi nusxalandi",
+    "couldNotUpdateExchangeStatus": "Almashuv holatini yangilab bo'lmadi"
   },
   "person": {
     "title": "Profil",
@@ -252,7 +262,12 @@
     "enableCamera": "Kamerani yoqish",
     "alignFrame": "Shtrix-kodni ramka ichiga joylashtiring",
     "lookingUp": "Kitob qidirilmoqda…",
-    "lookupFailed": "Qidiruv amalga oshmadi — ma'lumotlarni qo'lda kiriting"
+    "lookupFailed": "Qidiruv amalga oshmadi — ma'lumotlarni qo'lda kiriting",
+    "notFoundTitle": "Kitob topilmadi",
+    "notFoundBody": "ISBN {{isbn}} bo'yicha ma'lumot topilmadi. Qaytadan skanerlang yoki kitobni qo'lda qo'shing.",
+    "lookupErrorBody": "Bu shtrix-kodni tekshirib bo'lmadi. Internet aloqasini tekshirib, qayta urinib ko'ring.",
+    "scanAgain": "Qayta skanerlash",
+    "addManually": "Qo'lda qo'shish"
   },
   "swapChat": {
     "sys": {
@@ -291,7 +306,10 @@
     "somethingWentWrong": "Xatolik yuz berdi",
     "enablePhotoAccess": "Sozlamalarda fotosuratlarga ruxsat bering",
     "permissionNeeded": "Ruxsat kerak",
-    "couldNotSendPhoto": "Fotosuratni yuborib bo'lmadi"
+    "couldNotSendPhoto": "Fotosuratni yuborib bo'lmadi",
+    "bookUnavailable": "Kitob mavjud emas",
+    "sending": "Yuborilmoqda…",
+    "notSent": "Yuborilmadi — qayta urinish uchun bosing"
   },
   "reviews": {
     "title": "Sharhlar",
@@ -327,7 +345,7 @@
     "gallery": "Galereya",
     "camera": "Kamera",
     "name": "Ism",
-    "bio": "Bio",
+    "bio": "O'zim haqimda",
     "neighborhood": "Mahalla",
     "interestedGenres": "Qiziqtirgan janrlar",
     "languages": "Tillar",
@@ -398,5 +416,151 @@
   "emptyStates": {
     "noResults": "Natija yo'q",
     "noResultsHint": "Filtrlarni o'zgartirib ko'ring."
+  },
+  "location": {
+    "within100m": "100 m ichida",
+    "notSet": "Joylashuv aniqlanmagan",
+    "detected": "Joylashuv aniqlandi",
+    "locating": "Joylashuvingiz aniqlanmoqda…",
+    "enableTitle": "Yaqin atrofdagi kitobxonlarni ko'ring",
+    "enableBody": "BookLoop yaqin atrofdagi kitobxonlar va masofalarni ko'rsatish uchun joylashuvingizdan foydalanadi. Boshqalar faqat hududingizni ko'radi, aniq manzilingizni emas.",
+    "deniedBody": "Joylashuvga ruxsat berilmadi. Yaqin atrofdagi kitobxonlar va masofalarni ko'rish uchun ruxsat bering.",
+    "blockedBody": "BookLoop uchun joylashuvga ruxsat o'chirilgan. Uni Sozlamalarda yoqishingiz mumkin.",
+    "servicesOffBody": "Bu qurilmada joylashuv xizmatlari o'chirilgan. Ularni yoqib, qayta urinib ko'ring.",
+    "errorBody": "Joylashuvingizni aniqlab bo'lmadi. Internet aloqasini tekshirib, qayta urinib ko'ring.",
+    "useMyLocation": "Joylashuvimni aniqlash",
+    "openSettings": "Sozlamalarni ochish",
+    "update": "Yangilash",
+    "fromDevice": "Qurilmangiz orqali aniqlangan"
+  },
+  "permissions": {
+    "cameraTitle": "Kameraga ruxsat",
+    "cameraDenied": "Suratga olish uchun BookLoop'ga kamera kerak. Davom etish uchun ruxsat bering.",
+    "cameraBlocked": "BookLoop uchun kameraga ruxsat o'chirilgan. Uni Sozlamalarda yoqishingiz mumkin."
+  },
+  "appearance": {
+    "title": "Ko'rinish",
+    "subtitle": "BookLoop qanday ko'rinishini tanlang. Buni istalgan vaqtda o'zgartirishingiz mumkin.",
+    "system": "Tizim",
+    "systemHint": "Qurilma sozlamalaridan foydalanish",
+    "light": "Yorug'",
+    "dark": "Tungi"
+  },
+  "otp": {
+    "title": "Emailingizni tasdiqlang",
+    "subtitle": "{{email}} manziliga kod yubordik",
+    "codeLabel": "Tasdiqlash kodi",
+    "verify": "Tasdiqlash",
+    "resendIn": "Kodni {{seconds}} soniyadan keyin qayta yuborish",
+    "resend": "Kodni qayta yuborish",
+    "resent": "Kod qayta yuborildi",
+    "errorInvalid": "Tasdiqlash kodi noto'g'ri",
+    "errorExpired": "Tasdiqlash kodining muddati tugagan",
+    "errorTooManyAttempts": "Urinishlar juda ko'p — yangi kod so'rang",
+    "errorRateLimited": "Yangi kod so'rashdan oldin biroz kuting"
+  },
+  "createPassword": {
+    "title": "Parol yarating",
+    "subtitle": "Oz qoldi — hisobingizni himoyalang.",
+    "password": "Parol",
+    "confirmPassword": "Parolni tasdiqlang",
+    "requirementsTitle": "Parolda bo'lishi kerak:",
+    "reqLength": "Kamida 8 ta belgi",
+    "reqUpper": "Bitta katta harf",
+    "reqLower": "Bitta kichik harf",
+    "reqNumber": "Bitta raqam",
+    "reqSpecial": "Bitta maxsus belgi",
+    "mismatch": "Parollar mos kelmadi",
+    "submit": "Hisob yaratish",
+    "show": "Parolni ko'rsatish",
+    "hide": "Parolni yashirish"
+  },
+  "welcome": {
+    "heading": "BookLoop'ga xush kelibsiz,\n{{name}}.",
+    "line1": "Har bir kitob yangi kitobxonga loyiq.",
+    "line2": "Javoningizda kimningdir keyingi sevimli hikoyasi turgan bo'lishi mumkin.",
+    "supporting": "O'qiganlaringizni ulashing.\nYaqin atrofda nimalar kutayotganini kashf eting.\nHikoyalar harakatda bo'lsin.",
+    "cta": "Kashf etishni boshlash",
+    "brandLine": "O'qing. Almashing. Takrorlang."
+  },
+  "constructionOverlay": {
+    "message": "BookLoop'ni siz uchun yanada yaxshiroq qilmoqdamiz.\nSafarimizda birga bo'lganingiz uchun rahmat."
+  },
+  "enums": {
+    "genre": {
+      "fiction": "Badiiy adabiyot",
+      "psychology": "Psixologiya",
+      "business": "Biznes",
+      "history": "Tarix",
+      "biography": "Biografiya",
+      "self_development": "Shaxsiy rivojlanish",
+      "romance": "Romantika",
+      "fantasy": "Fantastika",
+      "philosophy": "Falsafa",
+      "science": "Ilm-fan"
+    },
+    "condition": {
+      "like_new": "Yangidek",
+      "good": "Yaxshi",
+      "acceptable": "Qoniqarli"
+    },
+    "bookLanguage": {
+      "uzbek": "O'zbek",
+      "english": "Ingliz",
+      "russian": "Rus",
+      "italian": "Italyan",
+      "arabic": "Arab",
+      "spanish": "Ispan",
+      "french": "Fransuz",
+      "german": "Nemis",
+      "portuguese": "Portugal"
+    },
+    "interest": {
+      "short_reads": "Qisqa asarlar",
+      "classics": "Klassika",
+      "bestsellers": "Bestsellerlar",
+      "university_texts": "Universitet adabiyoti",
+      "italian_authors": "Italyan mualliflari",
+      "book_club_picks": "Kitob klubi tanlovi",
+      "thrillers": "Trillerlar",
+      "poetry": "She'riyat",
+      "graphic_novels": "Grafik romanlar",
+      "non_fiction_deep_dives": "Chuqur ilmiy-ommabop asarlar"
+    }
+  },
+  "apiErrors": {
+    "invalidInput": "Kiritilgan ma'lumotlarni tekshiring.",
+    "sessionExpired": "Sessiya muddati tugadi. Iltimos, qaytadan kiring.",
+    "invalidCredentials": "Email yoki parol noto'g'ri",
+    "emailRegistered": "Bu email bilan hisob allaqachon mavjud",
+    "passwordTooLong": "Parol juda uzun (ko'pi bilan 72 belgi)",
+    "invalidSignIn": "Kirish urinishi muddati tugadi. Qaytadan urinib ko'ring.",
+    "googleNotConfigured": "Google orqali kirish hozircha mavjud emas",
+    "emailSendFailed": "Tasdiqlash xatini yuborib bo'lmadi. Qaytadan urinib ko'ring.",
+    "notFound": "Topilmadi",
+    "userNotFound": "Bu kitobxon topilmadi",
+    "bookNotFound": "Bu kitob topilmadi",
+    "swapNotFound": "Bu almashuv topilmadi",
+    "unsupportedLanguage": "Bu til qo'llab-quvvatlanmaydi",
+    "titleEmpty": "Nom bo'sh bo'lishi mumkin emas",
+    "invalidStatus": "Kitob holati noto'g'ri",
+    "bookInActiveSwap": "Bu kitob faol almashuvda. Avval almashuvni bekor qiling.",
+    "cannotSwapSelf": "O'zingiz bilan almasha olmaysiz",
+    "swapNotPending": "Bu almashuv endi kutilayotgan holatda emas",
+    "swapActionNotAllowed": "Holati «{{status}}» bo'lgan almashuv uchun bu amalni bajarib bo'lmaydi",
+    "swapCannotCancel": "Bu almashuvni endi bekor qilib bo'lmaydi",
+    "offeredBookNotYours": "Taklif qilinayotgan kitob sizning mavjud kitoblaringizdan biri bo'lishi kerak",
+    "requestedBookUnavailable": "So'ralgan kitob endi mavjud emas",
+    "bookNoLongerAvailable": "Taklif qilingan kitoblardan biri endi mavjud emas",
+    "noProposal": "Qabul qilinadigan taklif yo'q",
+    "cannotAcceptOwn": "O'z taklifingizni qabul qila olmaysiz",
+    "useCancelInstead": "O'z taklifingizni qaytarib olish uchun «Bekor qilish»dan foydalaning",
+    "swapNotCompleted": "Almashuv hali yakunlanmagan",
+    "alreadyRated": "Bu almashuvni allaqachon baholagansiz",
+    "emptyMessage": "Xabar bo'sh",
+    "unsupportedFileType": "Fayl turi qo'llab-quvvatlanmaydi. JPEG, PNG, WebP yoki HEIC rasm yuklang.",
+    "imageTooLarge": "Rasm juda katta (ko'pi bilan 8 MB)",
+    "imageStoreFailed": "Rasmni saqlab bo'lmadi. Qaytadan urinib ko'ring.",
+    "invalidFileLink": "Bu fayl havolasining muddati tugagan"
   }
 }

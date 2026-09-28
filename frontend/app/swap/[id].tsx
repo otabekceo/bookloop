@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useMemo } from "react";
 import { View, FlatList, Pressable, TextInput, ActivityIndicator, ScrollView } from "react-native";
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -15,6 +15,9 @@ import { useAuth } from "@/src/auth";
 import { makeStyles, useTheme } from "@/src/theme";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { renderKeyed, badgeLabel } from "@/src/i18n/messageKeys";
+import { mergeMessages, newClientId, withOutbox, type OutboxItem } from "@/src/chatMessages";
+
+type ChatData = { swap: any; messages: any[]; my_books: any[]; their_books: any[] };
 
 const STATUS_KEYS: Record<string, string> = {
   pending: "swaps.statusPending",
@@ -41,6 +44,10 @@ export default function SwapChat() {
   const rateSheet = useRef<BottomSheet>(null);
 
   const [text, setText] = useState("");
+  // Mirrors the input synchronously: two taps on Send within one frame must not both read the same text.
+  const textRef = useRef("");
+  const [outbox, setOutbox] = useState<OutboxItem[]>([]);
+  const forceFull = useRef(false);
   const [giveId, setGiveId] = useState<string | null>(null);
   const [getId, setGetId] = useState<string | null>(null);
   const [stars, setStars] = useState(5);
@@ -53,13 +60,33 @@ export default function SwapChat() {
   const imageTailMine = useDirectionalStyle({ borderBottomRightRadius: 4 });
   const imageTailTheirs = useDirectionalStyle({ borderBottomLeftRadius: 4 });
 
-  const { data, isLoading, refetch } = useQuery({
+  // First load gets the whole conversation; every poll after that asks only for messages newer than
+  // the last one we have (?after=) and merges them in, instead of re-downloading everything every 4 s.
+  const { data, isLoading, refetch } = useQuery<ChatData>({
     queryKey: ["swap", id],
-    queryFn: () => apiFetch<any>(`/api/swaps/${id}`),
+    queryFn: async () => {
+      const before = qc.getQueryData<ChatData>(["swap", id]);
+      const lastId = forceFull.current ? undefined : before?.messages[before.messages.length - 1]?.id;
+      forceFull.current = false;
+      const res = await apiFetch<any>(`/api/swaps/${id}${lastId ? `?after=${encodeURIComponent(lastId)}` : ""}`);
+      // Merge into what is cached NOW, not what was cached when the request started: a send that
+      // completed meanwhile has already been written into the cache and must not be dropped.
+      const current = qc.getQueryData<ChatData>(["swap", id]);
+      if (res.full || !current) {
+        return {
+          swap: res.swap,
+          messages: mergeMessages(res.messages, current ? current.messages.filter((m) => m.created_at > (res.messages[res.messages.length - 1]?.created_at ?? "")) : []),
+          my_books: res.my_books ?? current?.my_books ?? [],
+          their_books: res.their_books ?? current?.their_books ?? [],
+        };
+      }
+      return { ...current, swap: res.swap, messages: mergeMessages(current.messages, res.messages) };
+    },
     refetchInterval: 4000,
   });
 
   const invalidateAll = useCallback(() => {
+    forceFull.current = true; // actions change status/books: reload the whole conversation once
     refetch();
     qc.invalidateQueries({ queryKey: ["swaps"] });
     qc.invalidateQueries({ queryKey: ["notifications"] });
@@ -75,12 +102,48 @@ export default function SwapChat() {
     }
   };
 
-  const send = async () => {
-    const body = text.trim();
-    if (!body) return;
-    setText("");
-    await act(() => apiFetch(`/api/swaps/${id}/messages`, { method: "POST", body: { text: body } }));
+  const onChangeText = (v: string) => {
+    textRef.current = v;
+    setText(v);
   };
+
+  /** Sends one queued message. The client_id makes a retry of the same message idempotent server-side. */
+  const deliver = async (item: { client_id: string; text: string }) => {
+    try {
+      const res = await apiFetch<{ message: any }>(`/api/swaps/${id}/messages`, {
+        method: "POST",
+        body: { text: item.text, client_id: item.client_id },
+      });
+      qc.setQueryData<ChatData>(["swap", id], (d) => (d ? { ...d, messages: mergeMessages(d.messages, [res.message]) } : d));
+      setOutbox((o) => o.filter((m) => m.client_id !== item.client_id));
+      // The Swaps list shows the last message: mark it stale so it refreshes the next time it's shown,
+      // without refetching it (and the notifications) after every single message.
+      qc.invalidateQueries({ queryKey: ["swaps"], refetchType: "none" });
+    } catch {
+      setOutbox((o) => o.map((m) => (m.client_id === item.client_id ? { ...m, status: "failed" } : m)));
+    }
+  };
+
+  // Optimistic send: the bubble appears at once (marked as sending), the input clears at once, and the
+  // request runs in the background. Only the server's response turns it into a delivered message.
+  const send = () => {
+    const body = textRef.current.trim();
+    if (!body) return;
+    textRef.current = "";
+    setText("");
+    haptic("light");
+    const item: OutboxItem = { client_id: newClientId(), text: body, status: "sending", created_at: new Date().toISOString() };
+    setOutbox((o) => [...o, item]);
+    deliver(item);
+  };
+
+  const retry = (item: OutboxItem) => {
+    if (item.status !== "failed") return;
+    setOutbox((o) => o.map((m) => (m.client_id === item.client_id ? { ...m, status: "sending" } : m)));
+    deliver(item);
+  };
+
+  const listData = useMemo<any[]>(() => withOutbox(data?.messages || [], outbox, myId), [data?.messages, outbox, myId]);
 
   const sendImage = async () => {
     const picked = await pickImage("library", (blocked) => {
@@ -140,15 +203,15 @@ export default function SwapChat() {
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 14 }}>
             <View style={{ alignItems: "center", gap: 4, width: 70 }}>
               <BookCover uri={p.offered?.cover_url} width={54} />
-              <AppText variant="caption" numberOfLines={1}>
-                {p.offered?.title || "?"}
+              <AppText variant="caption" numberOfLines={2} style={{ textAlign: "center" }}>
+                {p.offered?.title || t("swapChat.bookUnavailable")}
               </AppText>
             </View>
             <ArrowsClockwise size={20} color={colors.muted} />
             <View style={{ alignItems: "center", gap: 4, width: 70 }}>
               <BookCover uri={p.requested?.cover_url} width={54} />
-              <AppText variant="caption" numberOfLines={1}>
-                {p.requested?.title || "?"}
+              <AppText variant="caption" numberOfLines={2} style={{ textAlign: "center" }}>
+                {p.requested?.title || t("swapChat.bookUnavailable")}
               </AppText>
             </View>
           </View>
@@ -170,13 +233,26 @@ export default function SwapChat() {
         </View>
       );
     }
+    const out: OutboxItem | undefined = item._outbox;
     return (
       <View style={[styles.bubbleRow, { justifyContent: mine ? "flex-end" : "flex-start" }]}>
-        <View style={[styles.bubble, mine ? bubbleMineStyle : bubbleTheirsStyle]}>
-          <AppText variant="body" color={mine ? colors.onBrandPrimary : colors.onSurfaceSecondary}>
-            {item.text}
-          </AppText>
-        </View>
+        <Pressable
+          disabled={out?.status !== "failed"}
+          onPress={() => out && retry(out)}
+          testID={out ? `outbox-${out.status}` : undefined}
+          style={{ maxWidth: "78%", alignItems: mine ? "flex-end" : "flex-start", gap: 3 }}
+        >
+          <View style={[styles.bubble, { maxWidth: "100%" }, mine ? bubbleMineStyle : bubbleTheirsStyle, out?.status === "sending" && { opacity: 0.65 }, out?.status === "failed" && styles.bubbleFailed]}>
+            <AppText variant="body" color={mine ? colors.onBrandPrimary : colors.onSurfaceSecondary}>
+              {item.text}
+            </AppText>
+          </View>
+          {out && (
+            <AppText variant="caption" color={out.status === "failed" ? colors.error : colors.muted}>
+              {out.status === "failed" ? t("swapChat.notSent") : t("swapChat.sending")}
+            </AppText>
+          )}
+        </Pressable>
       </View>
     );
   };
@@ -206,7 +282,7 @@ export default function SwapChat() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="translate-with-padding" keyboardVerticalOffset={0}>
         <FlatList
           ref={listRef}
-          data={data.messages}
+          data={listData}
           keyExtractor={(m) => m.id}
           renderItem={renderMessage}
           contentContainerStyle={{ padding: 16, gap: 8, paddingBottom: 16 }}
@@ -300,7 +376,7 @@ export default function SwapChat() {
               <TextInput
                 testID="message-input"
                 value={text}
-                onChangeText={setText}
+                onChangeText={onChangeText}
                 placeholder={t("swapChat.messagePlaceholder")}
                 placeholderTextColor={colors.muted}
                 style={styles.input}
@@ -398,6 +474,7 @@ const useStyles = makeStyles((colors) => ({
   bubble: { maxWidth: "78%", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18 },
   bubbleMine: { backgroundColor: colors.brandPrimary, borderBottomRightRadius: 4 },
   bubbleTheirs: { backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderBottomLeftRadius: 4 },
+  bubbleFailed: { opacity: 0.8, borderWidth: 1, borderColor: colors.error },
   proposalCard: { alignSelf: "center", backgroundColor: colors.surfaceSecondary, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.brandTertiary, marginVertical: 4 },
   actionArea: { paddingHorizontal: 16, paddingTop: 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 },
   doneRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 6 },

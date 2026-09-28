@@ -20,6 +20,7 @@ import { makeStyles, useTheme } from "@/src/theme";
 import { FONTS, fontsForLanguage, type FontRole } from "@/src/typography";
 import { resolveImage } from "@/src/api";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
+import { enumLabel } from "@/src/i18n/enums";
 
 export function haptic(kind: "light" | "success" | "selection" = "light") {
   try {
@@ -433,7 +434,7 @@ export function BookCover({
 // ---------------------------------------------------------------------------
 export function StatusBadge({ status }: { status: string }) {
   const { colors } = useTheme();
-  const { language } = useLanguage();
+  const { language, t } = useLanguage();
   const fonts = fontsForLanguage(language);
   const map: Record<string, { bg: string; fg: string }> = {
     Available: { bg: colors.sageSoft, fg: colors.brandSecondary },
@@ -444,7 +445,7 @@ export function StatusBadge({ status }: { status: string }) {
   return (
     <View style={{ backgroundColor: c.bg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, alignSelf: "flex-start" }}>
       <AppText variant="caption" color={c.fg} style={{ fontFamily: fonts.bold }}>
-        {status}
+        {enumLabel(t, "bookStatus", status)}
       </AppText>
     </View>
   );
@@ -570,9 +571,11 @@ export function Field({
   /** e.g. a show/hide-password eye icon. Rendered over the trailing (logical "end") edge of the
    * INPUT itself, vertically centered on it — not the label — and correctly mirrored under RTL. */
   rightElement,
+  /** Style for the outer wrapper (label + input); `style` styles the input itself. */
+  containerStyle,
   testID,
   ...rest
-}: TextInputProps & { label?: string; onSurface?: boolean; rightElement?: React.ReactNode }) {
+}: TextInputProps & { label?: string; onSurface?: boolean; rightElement?: React.ReactNode; containerStyle?: StyleProp<ViewStyle> }) {
   const { colors } = useTheme();
   const { language, isRTL } = useLanguage();
   const fonts = fontsForLanguage(language);
@@ -580,7 +583,7 @@ export function Field({
   // the "soft focus state" from the design system, not a hard color swap.
   const [focused, setFocused] = useState(false);
   return (
-    <View style={{ gap: 6 }}>
+    <View style={[{ gap: 6 }, containerStyle]}>
       {label && (
         <AppText variant="label" color={colors.onSurface}>
           {label}

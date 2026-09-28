@@ -9,10 +9,12 @@ import { AppText, Button, Chip, Avatar, RatingPill, DirectionalIcon, haptic, use
 import { BookTile, Book, Person } from "@/src/components/cards";
 import { useAuth } from "@/src/auth";
 import { apiFetch } from "@/src/api";
+import { distanceLabel, distanceOrArea, isKnownDistance } from "@/src/distance";
 import { GENRES, LANGUAGES, READING_INTERESTS } from "@/src/constants";
 import { makeStyles, useTheme } from "@/src/theme";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { bidiIsolate } from "@/src/i18n";
+import { enumLabel, genreOrInterestLabel, type EnumKind } from "@/src/i18n/enums";
 
 type WishBook = Book & { owner_avatar?: string | null; owner_exchanging?: boolean; distance_km: number; match_score: number };
 type WishData = {
@@ -120,25 +122,25 @@ export default function Wishlist() {
             <View style={styles.tagWrap}>
               {genres.map((g) => (
                 <View key={g} style={styles.tag}>
-                  <AppText variant="caption" color={colors.onBrandTertiary}>{g}</AppText>
+                  <AppText variant="caption" color={colors.onBrandTertiary}>{enumLabel(t, "genre", g)}</AppText>
                 </View>
               ))}
               {languages.map((l) => (
                 <View key={l} style={[styles.tag, { backgroundColor: colors.sageSoft }]}>
-                  <AppText variant="caption" color={colors.brandSecondary}>{l}</AppText>
+                  <AppText variant="caption" color={colors.brandSecondary}>{enumLabel(t, "bookLanguage", l)}</AppText>
                 </View>
               ))}
               {interests.map((i) => (
                 <View key={i} style={[styles.tag, { backgroundColor: colors.surfaceTertiary }]}>
-                  <AppText variant="caption" color={colors.onSurfaceTertiary}>{i}</AppText>
+                  <AppText variant="caption" color={colors.onSurfaceTertiary}>{enumLabel(t, "interest", i)}</AppText>
                 </View>
               ))}
             </View>
           ) : (
             <View style={{ gap: 16 }}>
-              <PrefGroup label={t("wishlist.genresYouLove")} options={GENRES} value={genres} onToggle={(v) => toggle(genres, setGenres, v)} idPrefix="wish-genre" />
-              <PrefGroup label={t("wishlist.languages")} options={LANGUAGES} value={languages} onToggle={(v) => toggle(languages, setLanguages, v)} idPrefix="wish-lang" />
-              <PrefGroup label={t("wishlist.readingInterests")} options={READING_INTERESTS} value={interests} onToggle={(v) => toggle(interests, setInterests, v)} idPrefix="wish-interest" />
+              <PrefGroup label={t("wishlist.genresYouLove")} options={GENRES} kind="genre" value={genres} onToggle={(v) => toggle(genres, setGenres, v)} idPrefix="wish-genre" />
+              <PrefGroup label={t("wishlist.languages")} options={[...LANGUAGES, ...languages.filter((l) => !LANGUAGES.includes(l))]} kind="bookLanguage" value={languages} onToggle={(v) => toggle(languages, setLanguages, v)} idPrefix="wish-lang" />
+              <PrefGroup label={t("wishlist.readingInterests")} options={READING_INTERESTS} kind="interest" value={interests} onToggle={(v) => toggle(interests, setInterests, v)} idPrefix="wish-interest" />
               <Button testID="save-wishlist" title={t("wishlist.saveWishlist")} onPress={save} loading={saving} disabled={!dirty && (user?.genres?.length || 0) > 0} />
             </View>
           )}
@@ -163,7 +165,7 @@ export default function Wishlist() {
                       <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
                         <MapPin size={11} color={colors.brandSecondary} weight="fill" />
                         <AppText variant="caption" color={colors.muted} style={{ fontSize: 11 }}>
-                          {b.distance_km < 999 ? bidiIsolate(`${b.distance_km} km`, language) : t("common.nearby")} · {bidiIsolate(b.genre, language)}
+                          {isKnownDistance(b.distance_km) ? bidiIsolate(distanceLabel(t, b.distance_km, false)!, language) : t("common.nearby")} · {bidiIsolate(b.genre, language)}
                         </AppText>
                       </View>
                     </View>
@@ -197,10 +199,10 @@ export default function Wishlist() {
                         <RatingPill rating={p.rating} count={p.rating_count} />
                       </View>
                       <AppText variant="caption" color={colors.brandPrimary} numberOfLines={1}>
-                        {[...(p.shared_genres || []), ...(p.shared_interests || [])].slice(0, 3).map((g) => bidiIsolate(g, language)).join(" · ") || t("wishlist.sharesYourLanguages")}
+                        {[...(p.shared_genres || []), ...(p.shared_interests || [])].slice(0, 3).map((g) => bidiIsolate(genreOrInterestLabel(t, g), language)).join(" · ") || t("wishlist.sharesYourLanguages")}
                       </AppText>
                       <AppText variant="caption" color={colors.muted}>
-                        {p.distance_km < 999 ? bidiIsolate(`${p.distance_km} km`, language) : bidiIsolate(p.neighborhood, language)} · {t("wishlist.booksForYouShort", { count: p.available_count || 0 })}
+                        {bidiIsolate(distanceOrArea(t, p, false), language)} · {t("wishlist.booksForYouShort", { count: p.available_count || 0 })}
                         {p.is_exchanging ? ` ${t("wishlist.exchangingNow")}` : ""}
                       </AppText>
                     </View>
@@ -219,14 +221,15 @@ export default function Wishlist() {
   );
 }
 
-function PrefGroup({ label, options, value, onToggle, idPrefix }: { label: string; options: string[]; value: string[]; onToggle: (v: string) => void; idPrefix: string }) {
+function PrefGroup({ label, options, kind, value, onToggle, idPrefix }: { label: string; options: string[]; kind: EnumKind; value: string[]; onToggle: (v: string) => void; idPrefix: string }) {
   const styles = useStyles();
+  const { t } = useLanguage();
   return (
     <View style={{ gap: 10 }}>
       <AppText variant="label">{label}</AppText>
       <View style={styles.tagWrap}>
         {options.map((o) => (
-          <Chip key={o} label={o} selected={value.includes(o)} onPress={() => onToggle(o)} testID={`${idPrefix}-${o}`} />
+          <Chip key={o} label={enumLabel(t, kind, o)} selected={value.includes(o)} onPress={() => onToggle(o)} testID={`${idPrefix}-${o}`} />
         ))}
       </View>
     </View>

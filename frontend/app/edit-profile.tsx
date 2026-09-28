@@ -4,24 +4,18 @@ import { useRouter, Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useQueryClient } from "@tanstack/react-query";
-import { X, Camera, Image as ImageIcon } from "phosphor-react-native";
+import { X, Camera, Image as ImageIcon, MapPin } from "phosphor-react-native";
 
 import { AppText, Avatar, Button, Field, Chip, haptic, useToast, useDirectionalStyle } from "@/src/components/ui";
 import { useAuth } from "@/src/auth";
 import { apiFetch } from "@/src/api";
-import { pickImage, uploadWithProgress, openSettings } from "@/src/media";
+import { pickImage, uploadWithProgress, cameraDeniedAlert } from "@/src/media";
 import { GENRES, LANGUAGES } from "@/src/constants";
+import { enumLabel } from "@/src/i18n/enums";
+import { useDeviceLocation } from "@/src/location";
+import { LocationPrompt } from "@/src/components/LocationPrompt";
 import { makeStyles, useTheme } from "@/src/theme";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
-
-const NB_COORDS: Record<string, { lat: number; lng: number }> = {
-  Centro: { lat: 38.1938, lng: 15.554 },
-  "University Area": { lat: 38.249, lng: 15.556 },
-  Annunziata: { lat: 38.247, lng: 15.547 },
-  Giostra: { lat: 38.21, lng: 15.547 },
-  Tremestieri: { lat: 38.12, lng: 15.52 },
-  Provinciale: { lat: 38.185, lng: 15.545 },
-};
 
 export default function EditProfile() {
   const styles = useStyles();
@@ -38,7 +32,8 @@ export default function EditProfile() {
   const [name, setName] = useState(user?.name || "");
   const [bio, setBio] = useState(user?.bio || "");
   const [avatar, setAvatar] = useState<string | null>(user?.avatar_url || null);
-  const [neighborhood, setNeighborhood] = useState(user?.neighborhood || "Centro");
+  // Location is not editable here: it only ever comes from the device (see src/location.ts).
+  const location = useDeviceLocation();
   const [genres, setGenres] = useState<string[]>(user?.genres || []);
   const [languages, setLanguages] = useState<string[]>(user?.languages || []);
   const [uploading, setUploading] = useState(false);
@@ -50,10 +45,7 @@ export default function EditProfile() {
   };
 
   const pickAvatar = async (source: "library" | "camera") => {
-    const picked = await pickImage(source, (blocked) => {
-      toast(blocked ? t("editProfile.enablePhotoAccess") : t("editProfile.permissionNeeded"), "error");
-      if (blocked) openSettings();
-    });
+    const picked = await pickImage(source, (blocked) => cameraDeniedAlert(t, blocked, () => pickAvatar(source)));
     if (!picked) return;
     setUploading(true);
     try {
@@ -69,10 +61,9 @@ export default function EditProfile() {
   const save = async () => {
     setSaving(true);
     try {
-      const coords = NB_COORDS[neighborhood] || NB_COORDS.Centro;
       await apiFetch("/api/users/me", {
         method: "PUT",
-        body: { name, bio, avatar_url: avatar, neighborhood, genres, languages, lat: coords.lat, lng: coords.lng, city: "Messina" },
+        body: { name, bio, avatar_url: avatar, genres, languages },
       });
       await refreshUser();
       qc.invalidateQueries();
@@ -124,18 +115,47 @@ export default function EditProfile() {
 
         <View style={{ gap: 10 }}>
           <AppText variant="label">{t("editProfile.neighborhood")}</AppText>
-          <View style={styles.wrap}>
-            {Object.keys(NB_COORDS).map((n) => (
-              <Chip key={n} label={n} selected={neighborhood === n} onPress={() => setNeighborhood(n)} testID={`nb-${n}`} />
-            ))}
-          </View>
+          {location.hasLocation ? (
+            <View style={styles.locationRow} testID="edit-location">
+              <MapPin size={18} color={colors.brandSecondary} weight="fill" />
+              <View style={{ flex: 1, gap: 2 }}>
+                <AppText variant="body">
+                  {[user?.neighborhood, user?.city].filter(Boolean).join(", ") || t("location.detected")}
+                </AppText>
+                <AppText variant="caption" color={colors.muted}>
+                  {t("location.fromDevice")}
+                </AppText>
+              </View>
+              <Button
+                testID="edit-location-refresh"
+                variant="outline"
+                title={t("location.update")}
+                loading={location.state === "locating"}
+                onPress={location.request}
+                style={{ height: 42, paddingHorizontal: 14, flexShrink: 0 }}
+              />
+            </View>
+          ) : (
+            <LocationPrompt state={location.state} onRequest={location.request} onOpenSettings={location.openSettings} testID="edit-location-prompt" />
+          )}
+          {location.hasLocation && (location.state === "blocked" || location.state === "denied" || location.state === "servicesOff" || location.state === "error") && (
+            <AppText variant="caption" color={colors.muted}>
+              {location.state === "blocked"
+                ? t("location.blockedBody")
+                : location.state === "denied"
+                  ? t("location.deniedBody")
+                  : location.state === "servicesOff"
+                    ? t("location.servicesOffBody")
+                    : t("location.errorBody")}
+            </AppText>
+          )}
         </View>
 
         <View style={{ gap: 10 }}>
           <AppText variant="label">{t("editProfile.interestedGenres")}</AppText>
           <View style={styles.wrap}>
             {GENRES.map((g) => (
-              <Chip key={g} label={g} selected={genres.includes(g)} onPress={() => toggle(genres, setGenres, g)} testID={`pg-${g}`} />
+              <Chip key={g} label={enumLabel(t, "genre", g)} selected={genres.includes(g)} onPress={() => toggle(genres, setGenres, g)} testID={`pg-${g}`} />
             ))}
           </View>
         </View>
@@ -143,8 +163,9 @@ export default function EditProfile() {
         <View style={{ gap: 10 }}>
           <AppText variant="label">{t("editProfile.languages")}</AppText>
           <View style={styles.wrap}>
-            {LANGUAGES.map((l) => (
-              <Chip key={l} label={l} selected={languages.includes(l)} onPress={() => toggle(languages, setLanguages, l)} testID={`pl-${l}`} />
+            {/* Offered languages, plus any older value the reader still has selected so it can be removed. */}
+            {[...LANGUAGES, ...languages.filter((l) => !LANGUAGES.includes(l))].map((l) => (
+              <Chip key={l} label={enumLabel(t, "bookLanguage", l)} selected={languages.includes(l)} onPress={() => toggle(languages, setLanguages, l)} testID={`pl-${l}`} />
             ))}
           </View>
         </View>
@@ -163,4 +184,5 @@ const useStyles = makeStyles((colors) => ({
   smallBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12 },
   camBadge: { position: "absolute", bottom: 0, right: 0, width: 30, height: 30, borderRadius: 15, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: colors.surface },
   wrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  locationRow: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: 16, padding: 14 },
 }));

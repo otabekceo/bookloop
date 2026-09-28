@@ -1,20 +1,22 @@
-import { Platform, Linking } from "react-native";
+import { Alert, Platform, Linking } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 
 import { API_BASE as BASE, getToken } from "@/src/api";
+import i18n from "@/src/i18n";
+import { localizeApiError } from "@/src/i18n/apiErrors";
 
 export type PickResult = { uri: string } | null;
 
-// Ensure permission for library or camera. Returns true if granted.
-async function ensurePermission(kind: "library" | "camera", onDenied: (blocked: boolean) => void): Promise<boolean> {
-  const get = kind === "camera" ? ImagePicker.getCameraPermissionsAsync : ImagePicker.getMediaLibraryPermissionsAsync;
-  const req = kind === "camera" ? ImagePicker.requestCameraPermissionsAsync : ImagePicker.requestMediaLibraryPermissionsAsync;
-  const perm = await get();
+// Camera permission, asked only when the user taps a camera action. Returns true if granted.
+// The photo library needs no permission at all: launchImageLibraryAsync opens the system photo
+// picker, which only hands the app the photo the user picks (a permission is needed on iOS 10 only).
+async function ensureCameraPermission(onDenied: (blocked: boolean) => void): Promise<boolean> {
+  const perm = await ImagePicker.getCameraPermissionsAsync();
   let status = perm.status;
   let canAskAgain = perm.canAskAgain;
   if (status !== "granted") {
     if (canAskAgain) {
-      const r = await req();
+      const r = await ImagePicker.requestCameraPermissionsAsync();
       status = r.status;
       canAskAgain = r.canAskAgain;
     }
@@ -30,8 +32,7 @@ export async function pickImage(
   source: "library" | "camera",
   onDenied: (blocked: boolean) => void,
 ): Promise<PickResult> {
-  const ok = await ensurePermission(source, onDenied);
-  if (!ok) return null;
+  if (source === "camera" && !(await ensureCameraPermission(onDenied))) return null;
   const opts: ImagePicker.ImagePickerOptions = {
     mediaTypes: ["images"],
     allowsEditing: true,
@@ -47,6 +48,19 @@ export async function pickImage(
 
 export function openSettings() {
   Linking.openSettings();
+}
+
+type Translate = (key: string, options?: Record<string, unknown>) => string;
+
+/** Explains a refused camera permission in the app's language and offers the useful next step:
+ * try again while the system can still ask, otherwise open the system Settings. */
+export function cameraDeniedAlert(t: Translate, blocked: boolean, retry: () => void) {
+  Alert.alert(t("permissions.cameraTitle"), blocked ? t("permissions.cameraBlocked") : t("permissions.cameraDenied"), [
+    { text: t("common.cancel"), style: "cancel" },
+    blocked
+      ? { text: t("location.openSettings"), onPress: openSettings }
+      : { text: t("common.retry"), onPress: retry },
+  ]);
 }
 
 // Upload with progress via XHR (works on native + web, reports real errors).
@@ -78,20 +92,20 @@ export function uploadWithProgress(
           try {
             resolve(JSON.parse(xhr.responseText));
           } catch {
-            reject(new Error("Bad server response"));
+            reject(new Error(i18n.t("errors.uploadFailed")));
           }
         } else {
-          let detail = `Upload failed (${xhr.status})`;
+          let detail: string | undefined;
           try {
-            detail = JSON.parse(xhr.responseText).detail || detail;
+            detail = JSON.parse(xhr.responseText).detail;
           } catch {}
-          reject(new Error(detail));
+          reject(new Error(localizeApiError(typeof detail === "string" ? detail : undefined, xhr.status)));
         }
       };
-      xhr.onerror = () => reject(new Error("Network error during upload"));
+      xhr.onerror = () => reject(new Error(localizeApiError(undefined, 0)));
       xhr.send(form);
     } catch (e: any) {
-      reject(new Error(e?.message || "Upload failed"));
+      reject(new Error(e?.message || i18n.t("errors.uploadFailed")));
     }
   });
 }

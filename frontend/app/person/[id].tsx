@@ -9,6 +9,9 @@ import { AppText, Avatar, Button, Stars, RatingPill, ExchangingDot, EmptyState, 
 import { BookTile, Book } from "@/src/components/cards";
 import { BadgeChips } from "@/src/components/badges";
 import { apiFetch } from "@/src/api";
+import { distanceOrArea } from "@/src/distance";
+import { openOrRequestSwap } from "@/src/swapStart";
+import { enumLabel } from "@/src/i18n/enums";
 import { makeStyles, useTheme } from "@/src/theme";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 
@@ -36,12 +39,16 @@ export default function PersonProfile() {
     haptic("light");
     setRequesting(true);
     try {
-      const res = await apiFetch<{ swap: { id: string } }>("/api/swaps", {
-        method: "POST",
-        body: { receiver_id: id },
+      await openOrRequestSwap({
+        userId: id,
+        name: data?.user?.name?.split(" ")[0] || "",
+        t,
+        open: (swapId) => {
+          haptic("success");
+          router.push(`/swap/${swapId}`);
+        },
+        onError: (message) => toast(message || t("person.couldNotStartSwap"), "error"),
       });
-      haptic("success");
-      router.push(`/swap/${res.swap.id}`);
     } catch (e: any) {
       toast(e.message || t("person.couldNotStartSwap"), "error");
     } finally {
@@ -77,7 +84,7 @@ export default function PersonProfile() {
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
                   <MapPin size={14} color={colors.brandSecondary} weight="fill" />
                   <AppText variant="caption" color={colors.muted}>
-                    {data.user.distance_km < 999 ? t("common.kmAway", { distance: data.user.distance_km }) : data.user.neighborhood}
+                    {distanceOrArea(t, data.user)}
                   </AppText>
                 </View>
                 <RatingPill rating={data.user.rating} count={data.user.rating_count} />
@@ -101,7 +108,7 @@ export default function PersonProfile() {
               <View testID="shared-genres" style={styles.sharedRow}>
                 <Sparkle size={14} color={colors.brandPrimary} weight="fill" />
                 <AppText variant="caption" color={colors.brandPrimary}>
-                  {t("person.youBothLove", { genres: data.user.shared_genres.join(", ") })}
+                  {t("person.youBothLove", { genres: data.user.shared_genres.map((g: string) => enumLabel(t, "genre", g)).join(", ") })}
                 </AppText>
               </View>
             )}
@@ -113,7 +120,7 @@ export default function PersonProfile() {
                   return (
                     <View key={g} style={[styles.tag, !hit && { backgroundColor: colors.surfaceTertiary }]}>
                       <AppText variant="label" color={hit ? colors.onBrandTertiary : colors.onSurfaceTertiary}>
-                        {g}
+                        {enumLabel(t, "genre", g)}
                       </AppText>
                     </View>
                   );
