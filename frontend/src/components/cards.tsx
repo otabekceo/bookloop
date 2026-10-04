@@ -4,6 +4,7 @@ import { MapPin, Sparkle, Fire } from "phosphor-react-native";
 
 import { AppText, Avatar, BookCover, ExchangingDot, RatingPill, StatusBadge, haptic, useDirectionalStyle } from "@/src/components/ui";
 import { Badge, BadgeIcon, topBadge } from "@/src/components/badges";
+import { FavoriteButton } from "@/src/components/FavoriteButton";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { badgeLabel } from "@/src/i18n/messageKeys";
 import { bidiIsolate } from "@/src/i18n";
@@ -31,6 +32,8 @@ export type Person = {
   shared_interests?: string[];
   match_score?: number;
   badges?: Badge[];
+  /** Whether the signed-in reader has this person in Favorites (absent from older servers). */
+  is_favorite?: boolean;
 };
 
 export type Book = {
@@ -108,6 +111,7 @@ export function PersonCard({ person }: { person: Person }) {
             </AppText>
           </View>
         </View>
+        <FavoriteButton userId={person.user_id} isFavorite={!!person.is_favorite} />
       </View>
 
       {genres.length > 0 && (

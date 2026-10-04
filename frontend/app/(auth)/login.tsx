@@ -5,11 +5,13 @@ import { LinearGradient } from "expo-linear-gradient";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { GoogleLogo } from "phosphor-react-native";
+import * as AppleAuthentication from "expo-apple-authentication";
 
 import { AppText, Button, Field, useToast, haptic } from "@/src/components/ui";
 import { Logo } from "@/src/components/Logo";
 import { useAuth } from "@/src/auth";
 import { apiFetch } from "@/src/api";
+import { appleAvailable } from "@/src/socialAuth";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { makeStyles, useTheme } from "@/src/theme";
 import { fontsForLanguage } from "@/src/typography";
@@ -27,10 +29,10 @@ function isLikelyEmail(value: string): boolean {
 
 export default function Login() {
   const styles = useStyles();
-  const { colors } = useTheme();
+  const { colors, scheme } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { login, requestOtp, loginWithGoogle, googleError, clearGoogleError } = useAuth();
+  const { login, requestOtp, loginWithGoogle, loginWithApple, googleError, clearGoogleError } = useAuth();
   const { t, language: uiLanguage } = useLanguage();
   const uiFonts = fontsForLanguage(uiLanguage);
   const toast = useToast();
@@ -41,12 +43,19 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Show the Google button only when the backend has a Google OAuth client configured.
+  // Show the Google / Apple buttons only when the backend has that provider configured (and, for
+  // Apple, only on an Apple device that supports it).
   const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [appleEnabled, setAppleEnabled] = useState(false);
   useEffect(() => {
     let live = true;
-    apiFetch<{ google: boolean }>("/api/auth/providers")
-      .then((p) => live && setGoogleEnabled(!!p.google))
+    apiFetch<{ google: boolean; apple?: boolean }>("/api/auth/providers")
+      .then(async (p) => {
+        if (!live) return;
+        setGoogleEnabled(!!p.google);
+        const apple = await appleAvailable(!!p.apple);
+        if (live) setAppleEnabled(apple);
+      })
       .catch(() => live && setGoogleEnabled(false));
     return () => {
       live = false;
@@ -99,6 +108,14 @@ export default function Login() {
       await loginWithGoogle();
     } catch {
       toast(t("auth.googleFailed"), "error");
+    }
+  };
+
+  const apple = async () => {
+    try {
+      if (await loginWithApple()) haptic("success");
+    } catch (e: any) {
+      toast(e?.code === "apple_email_missing" ? t("auth.appleEmailMissing") : t("auth.appleFailed"), "error");
     }
   };
 
@@ -177,7 +194,7 @@ export default function Login() {
             style={{ marginTop: 18 }}
           />
 
-          {googleEnabled && (
+          {(googleEnabled || appleEnabled) && (
             <>
               <View style={styles.divider}>
                 <View style={styles.line} />
@@ -187,13 +204,30 @@ export default function Login() {
                 <View style={styles.line} />
               </View>
 
-              <Button
-                testID="google-button"
-                title={t("auth.continueWithGoogle")}
-                variant="outline"
-                onPress={google}
-                icon={<GoogleLogo size={20} color={colors.brandPrimary} weight="bold" />}
-              />
+              {googleEnabled && (
+                <Button
+                  testID="google-button"
+                  title={t("auth.continueWithGoogle")}
+                  variant="outline"
+                  onPress={google}
+                  icon={<GoogleLogo size={20} color={colors.brandPrimary} weight="bold" />}
+                />
+              )}
+              {appleEnabled && (
+                // Apple's own button (required by Apple's guidelines); iOS draws and localizes its label.
+                <AppleAuthentication.AppleAuthenticationButton
+                  testID="apple-button"
+                  buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
+                  buttonStyle={
+                    scheme === "dark"
+                      ? AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+                      : AppleAuthentication.AppleAuthenticationButtonStyle.BLACK
+                  }
+                  cornerRadius={14}
+                  style={{ height: 50, width: "100%", marginTop: googleEnabled ? 12 : 0 }}
+                  onPress={apple}
+                />
+              )}
             </>
           )}
 

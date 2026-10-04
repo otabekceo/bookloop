@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import asyncio
 import time
 import hmac
 import uuid
@@ -47,6 +48,11 @@ GOOGLE_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
 # Public https address of this API, used to build the redirect URI registered in Google Cloud.
 # Falls back to the address the request arrived on (fine locally, wrong behind a proxy).
 PUBLIC_BACKEND_URL = (os.environ.get("PUBLIC_BACKEND_URL") or "").strip().rstrip("/")
+# Sign in with Apple: the app's bundle id(s) — the `aud` of Apple identity tokens. Unset = Apple
+# sign-in is off (the app hides the button). APPLE_KEYS_URL can point tests at a fake Apple.
+APPLE_AUDIENCES = tuple(a.strip() for a in (os.environ.get("APPLE_BUNDLE_IDS") or "").split(",") if a.strip())
+APPLE_KEYS_URL = os.environ.get("APPLE_KEYS_URL") or "https://appleid.apple.com/auth/keys"
+APPLE_ISSUER = "https://appleid.apple.com"
 # Where the app may be sent back to after Google: custom URL schemes of the app (Expo Go uses exp://),
 # plus web origins. http://localhost and http://127.0.0.1 are always allowed for development.
 APP_URL_SCHEMES = tuple(
@@ -239,6 +245,8 @@ class ProfileUpdate(BaseModel):
     preferred_language: Optional[str] = None
     # Set to true by the Welcome screen's "Start exploring" tap — never shown again after that.
     onboarding_completed: Optional[bool] = None
+    # Push notifications opt-in (Profile -> Notifications). Missing on older accounts = off.
+    notifications_enabled: Optional[bool] = None
 
 
 class LocationUpdate(BaseModel):
@@ -279,7 +287,23 @@ class BookUpdate(BaseModel):
 
 class SwapCreate(BaseModel):
     receiver_id: str
-    message: Optional[str] = None
+    # Optional note shown on the proposal. NOT a chat message and never unlocks chat.
+    note: Optional[str] = Field(default=None, max_length=2000)
+    # Older app builds send a first chat line as `message`; it is stored as the note instead.
+    message: Optional[str] = Field(default=None, max_length=2000)
+    # Both or neither: the books of the initial proposal.
+    offered_book_id: Optional[str] = None
+    requested_book_id: Optional[str] = None
+
+
+class ReadBody(BaseModel):
+    # The newest message the app has shown; everything up to it counts as read. Omitted = up to now.
+    message_id: Optional[str] = None
+
+
+class PushTokenBody(BaseModel):
+    token: str = Field(max_length=200)
+    platform: Optional[str] = Field(default=None, max_length=20)
 
 
 class ProposeBody(BaseModel):
@@ -298,7 +322,9 @@ class MessageBody(BaseModel):
 
 class RateBody(BaseModel):
     stars: int
-    review: Optional[str] = None
+    review: Optional[str] = Field(default=None, max_length=1000)
+    # The reviewer's choice. Off unless they deliberately turn it on; older app builds never send it.
+    is_anonymous: bool = False
 
 
 # ----------------------------------------------------------------------------
@@ -380,6 +406,7 @@ def public_user(u: dict, private: bool = False) -> dict:
                 # welcome screen for an existing user — startup's backfill_onboarding_state() also sets
                 # this explicitly, this default is just extra safety before/around that).
                 "onboarding_completed": u.get("onboarding_completed", True),
+                "notifications_enabled": bool(u.get("notifications_enabled", False)),
             }
         )
     return out
@@ -766,7 +793,7 @@ def _google_claims(tok: dict) -> Optional[dict]:
 
 @api.get("/auth/providers")
 async def auth_providers():
-    return {"google": _google_configured()}
+    return {"google": _google_configured(), "apple": _apple_configured()}
 
 
 @api.get("/auth/google/start")
@@ -775,8 +802,13 @@ async def google_start(request: Request, redirect: str):
         raise HTTPException(status_code=503, detail="Google sign-in is not configured")
     if not _allowed_app_redirect(redirect):
         raise HTTPException(status_code=400, detail="Redirect URL not allowed")
+    return RedirectResponse(await _google_auth_url(request, redirect), status_code=302)
+
+
+async def _google_auth_url(request: Request, redirect: str, link_user_id: Optional[str] = None) -> str:
     state = secrets.token_urlsafe(32)
-    await db.oauth_states.insert_one({"state": state, "redirect": redirect, "created_at": now_utc()})
+    await db.oauth_states.insert_one({"state": state, "redirect": redirect, "link_user_id": link_user_id,
+                                      "created_at": now_utc()})
     callback = (PUBLIC_BACKEND_URL or str(request.base_url).rstrip("/")) + "/api/auth/google/callback"
     params = {
         "client_id": GOOGLE_CLIENT_ID,
@@ -786,7 +818,22 @@ async def google_start(request: Request, redirect: str):
         "state": state,
         "prompt": "select_account",
     }
-    return RedirectResponse(f"{GOOGLE_AUTH_URL}?{urlencode(params)}", status_code=302)
+    return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
+
+
+class LinkStartBody(BaseModel):
+    redirect: str = Field(max_length=500)
+
+
+@api.post("/auth/google/link")
+async def google_link_start(body: LinkStartBody, request: Request, user: dict = Depends(get_current_user)):
+    """Settings -> Account -> Link Google. Returns the Google URL for the app to open; the signed-in
+    account is bound to the single-use OAuth state server-side, so the browser needs no credentials."""
+    if not _google_configured():
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured")
+    if not _allowed_app_redirect(body.redirect):
+        raise HTTPException(status_code=400, detail="Redirect URL not allowed")
+    return {"url": await _google_auth_url(request, body.redirect, link_user_id=user["user_id"])}
 
 
 @api.get("/auth/google/callback")
@@ -816,6 +863,12 @@ async def google_callback(request: Request, state: str = "", code: str = "", err
         logger.warning(f"Google token exchange failed: {e!r}")
         tok = None
     claims = _google_claims(tok) if tok else None
+    if rec.get("link_user_id"):
+        # Linking Google to the account that started this from Settings — never a sign-in.
+        if not claims or not claims.get("sub"):
+            return _app_redirect(redirect, link_error="failed")
+        err = await _link_identity(rec["link_user_id"], "google", claims["sub"], claims["email"].lower(), True)
+        return _app_redirect(redirect, **({"link_error": err} if err else {"linked": "google"}))
     user = await _google_user(claims) if claims else None
     if not user:
         return _app_redirect(redirect, google_error="failed")
@@ -838,10 +891,16 @@ async def google_session(body: SessionBody):
 
 
 async def _google_user(claims: dict) -> Optional[dict]:
-    """Find the account for a verified Google email, or create it."""
+    """The account for a verified Google identity: the one it is linked to; else the account with the
+    same Google-verified email (then the identity is linked to it); else a new account."""
     email = claims["email"].lower()
     name = claims.get("name") or email.split("@")[0]
     picture = claims.get("picture")
+    sub = claims.get("sub")
+    if sub:
+        linked = await _identity_user("google", sub)
+        if linked is not None:
+            return linked or None  # {} = linked to a deleted account
     user = await db.users.find_one({"email": email})
     if user:
         if user.get("deleted_at"):
@@ -878,7 +937,211 @@ async def _google_user(claims: dict) -> Optional[dict]:
             "deleted_at": None,
         }
         await db.users.insert_one(user)
+    if sub:
+        await _link_identity(uid, "google", sub, email, True)
     return user
+
+
+# --- Provider identities + account linking -----------------------------------------------------------
+# auth_identities: one document per (provider, subject) — the provider's stable user id, never an email —
+# pointing at one BookLoop user, at most one per provider per user. Emails are stored for display only.
+# Sign-in looks the identity up first. Only when it is unknown does a provider-VERIFIED email (verified by
+# Google/Apple server-side, never taken from the app) find an existing account, exactly as Google sign-in
+# already did before identities were stored.
+AUTH_PROVIDERS = ("google", "apple")
+
+
+async def _identity_user(provider: str, subject: str) -> Optional[dict]:
+    """None = identity unknown; {} = linked to an account that no longer exists; else the user."""
+    ident = await db.auth_identities.find_one({"provider": provider, "subject": subject}, {"_id": 0})
+    if not ident:
+        return None
+    user = await db.users.find_one({"user_id": ident["user_id"], "deleted_at": None}, {"_id": 0})
+    if user:
+        await db.auth_identities.update_one({"provider": provider, "subject": subject},
+                                            {"$set": {"last_login_at": now_utc()}})
+    return user or {}
+
+
+async def _link_identity(user_id: str, provider: str, subject: str, email: Optional[str], email_verified: bool,
+                         private_email: bool = False) -> Optional[str]:
+    """Links the identity to the user. Returns an error code, or None when linked (or already was)."""
+    existing = await db.auth_identities.find_one({"provider": provider, "subject": subject}, {"_id": 0})
+    if existing:
+        return None if existing["user_id"] == user_id else "identity_in_use"
+    if await db.auth_identities.find_one({"user_id": user_id, "provider": provider}, {"_id": 1}):
+        return "provider_already_linked"  # a different Google/Apple account is already linked
+    try:
+        await db.auth_identities.insert_one({
+            "provider": provider, "subject": subject, "user_id": user_id,
+            "email": email, "email_verified": bool(email_verified), "private_email": private_email,
+            "created_at": now_utc(), "last_login_at": now_utc(),
+        })
+    except DuplicateKeyError:  # a concurrent link won the race
+        again = await db.auth_identities.find_one({"provider": provider, "subject": subject}, {"_id": 0})
+        return None if again and again["user_id"] == user_id else "identity_in_use"
+    return None
+
+
+def _apple_configured() -> bool:
+    if not APPLE_AUDIENCES:
+        return False
+    try:
+        import jwt  # noqa: F401  (PyJWT[crypto]; Apple sign-in stays off without it)
+        return True
+    except ImportError:
+        return False
+
+
+_apple_keys: dict = {"at": 0.0, "keys": {}}
+
+
+async def _apple_public_key(kid: str):
+    """Apple's signing key by id, from its JWKS: cached for an hour, refetched early (at most once a
+    minute) when Apple starts signing with a key we haven't seen."""
+    import jwt
+    age = time.time() - _apple_keys["at"]
+    if age > 3600 or (kid not in _apple_keys["keys"] and age > 60):
+        async with httpx.AsyncClient(timeout=10) as hc:
+            resp = await hc.get(APPLE_KEYS_URL)
+        resp.raise_for_status()
+        _apple_keys["keys"] = {k["kid"]: jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(k)) for k in resp.json()["keys"]}
+        _apple_keys["at"] = time.time()
+    return _apple_keys["keys"].get(kid)
+
+
+async def _apple_claims(identity_token: str, nonce_id: str) -> Optional[dict]:
+    """Verifies an Apple identity token: Apple's signature, issuer, our bundle id as audience, expiry,
+    and the single-use nonce this server issued (the token carries its SHA-256)."""
+    import jwt
+    rec = await db.apple_nonces.find_one_and_delete({"id": nonce_id}) if nonce_id else None
+    if not rec or (now_utc() - _aware(rec["created_at"])) > timedelta(minutes=10):
+        return None
+    try:
+        kid = jwt.get_unverified_header(identity_token).get("kid")
+        key = await _apple_public_key(kid) if kid else None
+        if key is None:
+            return None
+        claims = jwt.decode(identity_token, key, algorithms=["RS256"], audience=list(APPLE_AUDIENCES),
+                            issuer=APPLE_ISSUER, options={"require": ["exp", "iat", "sub", "aud", "iss"]})
+    except Exception as e:
+        logger.warning(f"Apple identity token rejected: {e!r}")
+        return None
+    expected = hashlib.sha256(rec["nonce"].encode()).hexdigest()
+    if not hmac.compare_digest(str(claims.get("nonce") or ""), expected):
+        return None
+    return claims
+
+
+class AppleAuthBody(BaseModel):
+    identity_token: str = Field(max_length=5000)
+    nonce_id: str = Field(max_length=100)
+    # Apple gives the name to the app only on the very first authorization, never inside the token.
+    # It is only a display-name suggestion for a NEW account — never used to identify anyone.
+    given_name: Optional[str] = Field(default=None, max_length=60)
+    family_name: Optional[str] = Field(default=None, max_length=60)
+
+
+def _apple_email(claims: dict):
+    """(email, verified, private relay) from the verified token. A private-relay address is a real,
+    verified, forwarding address — but it can never match an existing BookLoop email."""
+    email = (claims.get("email") or "").strip().lower() or None
+    verified = claims.get("email_verified") in (True, "true")
+    private = claims.get("is_private_email") in (True, "true") or bool(email and email.endswith("@privaterelay.appleid.com"))
+    return email, verified, private
+
+
+@api.post("/auth/apple/nonce")
+async def apple_nonce():
+    """A single-use nonce: the app passes its SHA-256 to Apple, and Apple signs it into the token."""
+    if not _apple_configured():
+        raise HTTPException(status_code=503, detail="Sign in with Apple is not configured")
+    rec = {"id": secrets.token_urlsafe(16), "nonce": secrets.token_urlsafe(32), "created_at": now_utc()}
+    await db.apple_nonces.insert_one(dict(rec))
+    return {"nonce_id": rec["id"], "nonce": rec["nonce"]}
+
+
+@api.post("/auth/apple")
+async def apple_sign_in(body: AppleAuthBody):
+    if not _apple_configured():
+        raise HTTPException(status_code=503, detail="Sign in with Apple is not configured")
+    claims = await _apple_claims(body.identity_token, body.nonce_id)
+    if not claims:
+        raise _coded(401, "apple_failed", "Sign in with Apple could not be verified")
+    sub = claims["sub"]
+    user = await _identity_user("apple", sub)
+    if user == {}:
+        raise _coded(401, "apple_failed", "This account no longer exists")
+    email, verified, private = _apple_email(claims)
+    if user is None and email and verified and not private:
+        # Same rule as Google: an Apple-verified email finds the existing account with that email.
+        found = await db.users.find_one({"email": email}, {"_id": 0})
+        if found and found.get("deleted_at"):
+            raise _coded(401, "apple_failed", "This account no longer exists")
+        user = found
+    if user is None:
+        if not email or not verified:
+            # Apple omits the email only when this Apple ID authorized BookLoop before; without it no
+            # account can be created (it would have no contact address).
+            raise _coded(400, "apple_email_missing", "Apple did not share an email address")
+        name = " ".join(p.strip() for p in (body.given_name, body.family_name) if p and p.strip())[:60]
+        user = _build_user_doc(email, name or "Reader", None, None, onboarding_completed=False)
+        try:
+            await db.users.insert_one(user)
+        except DuplicateKeyError:
+            raise _coded(409, "apple_failed", "Could not create the account — please try again")
+        user.pop("_id", None)
+    err = await _link_identity(user["user_id"], "apple", sub, email, verified, private)
+    if err:
+        raise _coded(409, err, "This Apple ID can't be used with this account")
+    token = await create_session(user["user_id"])
+    return {"session_token": token, "user": public_user(user, private=True)}
+
+
+@api.post("/auth/apple/link")
+async def apple_link(body: AppleAuthBody, user: dict = Depends(get_current_user)):
+    """Settings -> Account -> Link Apple, for the signed-in account (no email matching involved)."""
+    if not _apple_configured():
+        raise HTTPException(status_code=503, detail="Sign in with Apple is not configured")
+    claims = await _apple_claims(body.identity_token, body.nonce_id)
+    if not claims:
+        raise _coded(401, "apple_failed", "Sign in with Apple could not be verified")
+    email, verified, private = _apple_email(claims)
+    err = await _link_identity(user["user_id"], "apple", claims["sub"], email, verified, private)
+    if err:
+        raise _coded(409, err, "This Apple ID can't be linked to this account")
+    return await account_identities(user)
+
+
+@api.get("/auth/identities")
+async def account_identities(user: dict = Depends(get_current_user)):
+    """Settings -> Account: the ways this account can sign in."""
+    idents = {i["provider"]: i for i in await db.auth_identities.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(10)}
+    return {
+        "email": user.get("email"),
+        "password": bool(user.get("password_hash")),
+        "providers": {
+            p: {"linked": p in idents, "email": idents[p].get("email") if p in idents else None,
+                "private_email": bool(idents[p].get("private_email")) if p in idents else False}
+            for p in AUTH_PROVIDERS
+        },
+        "available": {"google": _google_configured(), "apple": _apple_configured()},
+    }
+
+
+@api.delete("/auth/identities/{provider}")
+async def unlink_identity(provider: str, user: dict = Depends(get_current_user)):
+    """Unlinks a provider from the signed-in account — never its last way to sign in."""
+    if provider not in AUTH_PROVIDERS:
+        raise HTTPException(status_code=404, detail="Not found")
+    ident = await db.auth_identities.find_one({"user_id": user["user_id"], "provider": provider}, {"_id": 1})
+    if not ident:
+        raise HTTPException(status_code=404, detail="Not linked")
+    others = await db.auth_identities.count_documents({"user_id": user["user_id"], "provider": {"$ne": provider}})
+    if not user.get("password_hash") and others == 0:
+        raise _coded(409, "last_login_method", "This is your only way to sign in — it can't be removed")
+    await db.auth_identities.delete_one({"_id": ident["_id"]})
+    return await account_identities(user)
 
 
 @api.get("/auth/me")
@@ -943,20 +1206,50 @@ async def _books_for(owner_id: str, only_available: bool = False):
     return [clean_book(b) for b in books]
 
 
+ANONYMOUS_REVIEWER_NAME = "BookLoop member"
+
+
+async def public_reviews(ratings: List[dict]) -> List[dict]:
+    """The only shape in which reviews leave the server. Identified reviews carry the reviewer's public
+    name/avatar/id; anonymous ones carry nothing about the reviewer at all (no id, name, avatar, swap,
+    or exact time — only the day), so no endpoint can reveal who wrote them. Reviews from before
+    is_anonymous existed were always shown with the reviewer's name, and still are."""
+    ids = list({r["rater_id"] for r in ratings if not r.get("is_anonymous") and r.get("rater_id")})
+    raters = {u["user_id"]: u for u in await db.users.find(
+        {"user_id": {"$in": ids}}, {"_id": 0, "user_id": 1, "name": 1, "avatar_url": 1, "deleted_at": 1}).to_list(None)}
+    out = []
+    for r in ratings:
+        created = _aware(r.get("created_at"))
+        item = {"id": r["id"], "stars": r["stars"], "review": r.get("review") or "",
+                "is_anonymous": bool(r.get("is_anonymous"))}
+        if item["is_anonymous"]:
+            # English fallback for older app builds that print rater_name; new builds localize it.
+            item.update({"rater_id": None, "rater_name": ANONYMOUS_REVIEWER_NAME, "rater_avatar": None,
+                         "created_at": f"{created.date().isoformat()}T12:00:00+00:00" if created else None})
+        else:
+            rater = raters.get(r["rater_id"])
+            gone = not rater or rater.get("deleted_at")
+            item.update({"rater_id": None if gone else r["rater_id"],
+                         "rater_name": "Someone" if gone else rater.get("name", ""),
+                         "rater_avatar": None if gone else rater.get("avatar_url"),
+                         "created_at": created.isoformat() if created else None})
+        out.append(item)
+    return out
+
+
 @api.get("/users/{user_id}")
 async def get_user(user_id: str, user: dict = Depends(get_current_user)):
     u = await db.users.find_one({"user_id": user_id, "deleted_at": None}, {"_id": 0})
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
-    ratings = await db.ratings.find({"ratee_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
-    for r in ratings:
-        rater = await db.users.find_one({"user_id": r["rater_id"]}, {"_id": 0})
-        r["rater_name"] = rater.get("name") if rater else "Someone"
-        r["rater_avatar"] = rater.get("avatar_url") if rater else None
+    ratings = await public_reviews(
+        await db.ratings.find({"ratee_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    )
     pu = public_user(u, private=(user_id == user["user_id"]))
     pu["distance_km"] = user_distance_km(user, u)
     books = await _books_for(user_id)
     pu.update(match_info(user, u, {b["genre"] for b in books if b["status"] == "Available"}))
+    pu["is_favorite"] = bool(await db.favorites.find_one({"user_id": user["user_id"], "target_id": user_id}, {"_id": 1}))
     return {"user": pu, "books": books, "reviews": ratings}
 
 
@@ -1207,9 +1500,14 @@ async def discover_people(
         ).sort("created_at", -1).to_list(None)
         for b in books:
             shelves.setdefault(b["owner_id"], []).append(clean_book(b))
+    favs = {
+        f["target_id"]
+        for f in await db.favorites.find({"user_id": user["user_id"]}, {"_id": 0, "target_id": 1}).to_list(None)
+    }
     result = []
     for p, dist in candidates:
         pu = public_user(p)
+        pu["is_favorite"] = p["user_id"] in favs
         pu["distance_km"] = dist
         pu["books"] = shelves.get(p["user_id"], [])[:6]
         pu["available_count"] = len(pu["books"])
@@ -1393,6 +1691,234 @@ async def map_clusters(user: dict = Depends(get_current_user)):
 # ----------------------------------------------------------------------------
 # Swaps
 # ----------------------------------------------------------------------------
+OPEN_ACTIVE_STATUSES = ("accepted", "active")
+CLOSED_STATUSES = ("completed", "declined", "cancelled")
+# Statuses in which the recipient has accepted the swap itself (chat is always open in these).
+ACCEPTED_STATUSES = ("accepted", "active", "completed")
+# Messages people type (as opposed to system/proposal messages, which are events). Only these count
+# as unread chat messages and only these are gated by the chat lock.
+CHAT_MESSAGE_TYPES = ("text", "image")
+
+# --- Chat access -------------------------------------------------------------------------------
+# Swap status and chat access are separate things. The one rule set, used by every endpoint:
+#   accepted / active / completed           -> open (completing a swap never closes its chat)
+#   pending, recipient allowed chat         -> open ("Accept to continue chatting" or accepting)
+#   pending, the two readers met before     -> open
+#   pending otherwise                       -> locked: the requester waits, the recipient decides
+#   declined / cancelled                    -> open only if the two readers met before, else closed
+# "Met before" = at least one swap between them that the recipient accepted (active/completed, or
+# accepted and later cancelled). Favorites, notes and proposals never create chat access.
+CHAT_OPEN = "open"
+CHAT_LOCKED_WAITING = "locked_waiting"  # I sent the request; the recipient has not accepted yet
+CHAT_LOCKED_NEEDS_YOU = "locked_needs_you"  # I received it; chat opens when I accept
+CHAT_CLOSED = "closed"
+
+
+def _pair_query(a: str, b: str) -> dict:
+    return {"$or": [{"requester_id": a, "receiver_id": b}, {"requester_id": b, "receiver_id": a}]}
+
+
+def _other_id(s: dict, uid: str) -> str:
+    return s["receiver_id"] if s["requester_id"] == uid else s["requester_id"]
+
+
+def _read_field(s: dict, uid: str) -> str:
+    return "requester_read_at" if s["requester_id"] == uid else "receiver_read_at"
+
+
+async def _pair_has_met(a: str, b: str) -> bool:
+    pair = _pair_query(a, b)
+    accepted = {"$or": [{"status": {"$in": list(ACCEPTED_STATUSES)}}, {"accepted_at": {"$exists": True, "$ne": None}}]}
+    if await db.swaps.find_one({"$and": [pair, accepted]}, {"_id": 1}):
+        return True
+    # Swaps accepted and later cancelled before v2.2 have no accepted_at; their chat still holds the
+    # "Swap confirmed" system message written at acceptance.
+    legacy = [s["id"] for s in await db.swaps.find(
+        {"$and": [pair, {"status": "cancelled", "accepted_at": {"$exists": False}}]}, {"_id": 0, "id": 1}
+    ).to_list(200)]
+    if legacy and await db.messages.find_one({"swap_id": {"$in": legacy}, "key": "swapChat.sys.confirmed"}, {"_id": 1}):
+        return True
+    return False
+
+
+async def _chat_state(s: dict, uid: str) -> str:
+    status = s["status"]
+    if status in ACCEPTED_STATUSES:
+        return CHAT_OPEN
+    if status == "pending":
+        if s.get("chat_accepted_at"):
+            return CHAT_OPEN
+        # Pending swaps from before v2.2: if the recipient already took part in the conversation
+        # (the old app let both sides chat), they consented — keep that conversation open.
+        if await db.messages.find_one(
+            {"swap_id": s["id"], "sender_id": s["receiver_id"], "type": {"$in": [*CHAT_MESSAGE_TYPES, "proposal"]}},
+            {"_id": 1},
+        ):
+            return CHAT_OPEN
+        if await _pair_has_met(s["requester_id"], s["receiver_id"]):
+            return CHAT_OPEN
+        return CHAT_LOCKED_NEEDS_YOU if uid == s["receiver_id"] else CHAT_LOCKED_WAITING
+    if await _pair_has_met(s["requester_id"], s["receiver_id"]):
+        return CHAT_OPEN
+    return CHAT_CLOSED
+
+
+def _coded(status: int, code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status, detail={"message": message, "code": code})
+
+
+# --- Proposal note -------------------------------------------------------------------------------
+NOTE_MAX_CHARS = 280
+REVIEW_MAX_CHARS = 1000
+_NOTE_CONTROL = re.compile(r"[\u0000-\u0008\u000b-\u001f\u007f​-‏‪-‮⁦-⁩﻿]")
+
+
+def clean_note_text(raw: Optional[str], limit: int) -> str:
+    """User-written free text shown to other users (proposal notes, reviews): control, invisible and
+    bidi-override characters removed, at most two consecutive line breaks, trimmed, cut at `limit`."""
+    text = _NOTE_CONTROL.sub("", (raw or "").replace("\r\n", "\n").replace("\r", "\n"))
+    return re.sub(r"\n{3,}", "\n\n", text).strip()[:limit]
+
+
+def clean_note(raw: Optional[str]) -> Optional[str]:
+    """The optional note on a proposal: plain text, trimmed, control/invisible/bidi-override
+    characters removed, at most two consecutive line breaks, NOTE_MAX_CHARS characters. Empty -> None."""
+    if raw is None:
+        return None
+    text = clean_note_text(raw, len(raw))
+    if not text:
+        return None
+    if len(text) > NOTE_MAX_CHARS:
+        raise _coded(400, "note_too_long", f"The note can be at most {NOTE_MAX_CHARS} characters")
+    return text
+
+
+# --- Anti-spam limits on new swap requests --------------------------------------------------------
+# Counted from the swaps collection itself (no extra state). "Unanswered" = still pending without the
+# recipient accepting chat, or declined — i.e. requests nobody wanted.
+REQUESTS_PER_HOUR = int(os.environ.get("SWAP_REQUESTS_PER_HOUR") or 20)
+UNANSWERED_REQUESTS_PER_DAY = int(os.environ.get("SWAP_UNANSWERED_PER_DAY") or 10)
+PAIR_REQUESTS_PER_DAY = 3
+DECLINE_COOLDOWN_HOURS = 24
+# While the chat is locked, the requester may change their proposal only this many times in total.
+LOCKED_PROPOSALS_MAX = 3
+
+
+async def _check_request_limits(requester_id: str, receiver_id: str) -> None:
+    now = now_utc()
+    day_ago, hour_ago = now - timedelta(days=1), now - timedelta(hours=1)
+    mine = {"requester_id": requester_id}
+    if await db.swaps.count_documents({**mine, "created_at": {"$gte": hour_ago}}) >= REQUESTS_PER_HOUR:
+        raise _coded(429, "rate_limited", "Too many swap requests — please try again later")
+    unanswered = await db.swaps.count_documents({
+        **mine, "created_at": {"$gte": day_ago},
+        "$or": [{"status": "pending", "chat_accepted_at": None}, {"status": "declined"}],
+    })
+    if unanswered >= UNANSWERED_REQUESTS_PER_DAY:
+        raise _coded(429, "rate_limited", "Too many unanswered swap requests — please try again later")
+    pair = {"requester_id": requester_id, "receiver_id": receiver_id, "created_at": {"$gte": day_ago}}
+    if await db.swaps.find_one({**pair, "status": "declined",
+                                "updated_at": {"$gte": now - timedelta(hours=DECLINE_COOLDOWN_HOURS)}}, {"_id": 1}):
+        raise _coded(429, "recently_declined", "This reader recently declined your request — try again later")
+    if await db.swaps.count_documents(pair) >= PAIR_REQUESTS_PER_DAY:
+        raise _coded(429, "rate_limited", "Too many requests to this reader today — please try again later")
+
+
+# --- Notification events + push ------------------------------------------------------------------
+# Events are stored per recipient in `notifications`; new chat messages are NOT stored there (the
+# unread state of a conversation is derived from its messages and the reader's read marker), so a
+# message is never counted twice.
+EVENT_TYPES = ("proposal_received", "proposal_accepted", "proposal_declined", "proposal_cancelled", "chat_accepted")
+
+# Push texts, localized by the recipient's preferred language (English fallback). {name} = the actor.
+PUSH_TEXT = {
+    "en": {"proposal_received": "New swap proposal from {name}", "proposal_accepted": "{name} accepted your swap",
+           "proposal_declined": "{name} declined the swap", "proposal_cancelled": "{name} cancelled the swap",
+           "chat_accepted": "{name} accepted your request — you can chat now", "message": "New message from {name}",
+           "photo": "📷 Photo"},
+    "uz": {"proposal_received": "{name}dan yangi almashuv taklifi", "proposal_accepted": "{name} almashuvingizni qabul qildi",
+           "proposal_declined": "{name} almashuvni rad etdi", "proposal_cancelled": "{name} almashuvni bekor qildi",
+           "chat_accepted": "{name} so‘rovingizni qabul qildi — endi yozishishingiz mumkin",
+           "message": "{name}dan yangi xabar", "photo": "📷 Rasm"},
+    "ru": {"proposal_received": "Новое предложение обмена от {name}", "proposal_accepted": "{name} принял(а) ваш обмен",
+           "proposal_declined": "{name} отклонил(а) обмен", "proposal_cancelled": "{name} отменил(а) обмен",
+           "chat_accepted": "{name} принял(а) ваш запрос — теперь можно переписываться",
+           "message": "Новое сообщение от {name}", "photo": "📷 Фото"},
+    "it": {"proposal_received": "Nuova proposta di scambio da {name}", "proposal_accepted": "{name} ha accettato il tuo scambio",
+           "proposal_declined": "{name} ha rifiutato lo scambio", "proposal_cancelled": "{name} ha annullato lo scambio",
+           "chat_accepted": "{name} ha accettato la tua richiesta — ora potete chattare",
+           "message": "Nuovo messaggio da {name}", "photo": "📷 Foto"},
+    "ar": {"proposal_received": "عرض تبادل جديد من {name}", "proposal_accepted": "قبل {name} التبادل",
+           "proposal_declined": "رفض {name} التبادل", "proposal_cancelled": "ألغى {name} التبادل",
+           "chat_accepted": "قبل {name} طلبك — يمكنكما الدردشة الآن", "message": "رسالة جديدة من {name}",
+           "photo": "📷 صورة"},
+}
+EXPO_PUSH_URL = os.environ.get("EXPO_PUSH_URL") or "https://exp.host/--/api/v2/push/send"
+PUSH_TOKEN_RE = re.compile(r"^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_\-]{8,120}\]$")
+
+
+def _push_text(lang: Optional[str], kind: str, name: str) -> str:
+    table = PUSH_TEXT.get(lang or "en") or PUSH_TEXT["en"]
+    return (table.get(kind) or PUSH_TEXT["en"][kind]).format(name=name)
+
+
+async def _deliver_push(messages: List[dict]) -> None:
+    """Sends through the Expo push service. Tokens Expo reports as no longer registered are removed.
+    With OTP_DEBUG_MODE (test runs) nothing leaves the machine: pushes are recorded in push_debug."""
+    if OTP_DEBUG_MODE:
+        await db.push_debug.insert_many([{**m, "created_at": now_utc()} for m in messages])
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10) as hc:
+            resp = await hc.post(EXPO_PUSH_URL, json=messages, headers={"Accept": "application/json"})
+        tickets = resp.json().get("data") if resp.status_code == 200 else None
+        if not isinstance(tickets, list):
+            logger.warning(f"Expo push rejected: HTTP {resp.status_code} {resp.text[:300]}")
+            return
+        for m, ticket in zip(messages, tickets):
+            if ticket.get("status") == "error":
+                err = (ticket.get("details") or {}).get("error")
+                logger.warning(f"Expo push error for a token: {err or ticket.get('message')}")
+                if err == "DeviceNotRegistered":
+                    await db.push_tokens.delete_one({"token": m["to"]})
+    except Exception as e:  # push is best-effort; never fail the request that triggered it
+        logger.warning(f"Expo push failed: {e!r}")
+
+
+async def _push(user_id: str, kind: str, actor_name: str, data: dict, body: Optional[str] = None) -> None:
+    """Push to the user's registered devices — only if they turned Notifications on."""
+    u = await db.users.find_one({"user_id": user_id, "deleted_at": None},
+                                {"_id": 0, "notifications_enabled": 1, "preferred_language": 1})
+    if not u or not u.get("notifications_enabled"):
+        return
+    tokens = await db.push_tokens.find({"user_id": user_id}, {"_id": 0, "token": 1}).to_list(20)
+    if not tokens:
+        return
+    title = _push_text(u.get("preferred_language"), kind, actor_name)
+    msgs = [{"to": t["token"], "title": title, "body": body or "", "sound": "default", "data": data,
+             "channelId": "default", "user_id": user_id, "kind": kind} for t in tokens]
+    # Only the Expo fields go over the wire; user_id/kind are kept for the debug record.
+    if OTP_DEBUG_MODE:
+        await _deliver_push(msgs)
+    else:
+        asyncio.create_task(_deliver_push([{k: v for k, v in m.items() if k not in ("user_id", "kind")} for m in msgs]))
+
+
+async def _notify(user_id: str, etype: str, swap: dict, actor: dict) -> None:
+    """Record an event for the recipient (deduplicated per swap+type while unread) and push it."""
+    now = now_utc()
+    existing = await db.notifications.find_one_and_update(
+        {"user_id": user_id, "type": etype, "swap_id": swap["id"], "read_at": None},
+        {"$set": {"created_at": now, "actor_id": actor["user_id"]}},
+    )
+    if not existing:
+        await db.notifications.insert_one({
+            "id": new_id("ntf"), "user_id": user_id, "type": etype, "swap_id": swap["id"],
+            "actor_id": actor["user_id"], "created_at": now, "read_at": None,
+        })
+    await _push(user_id, etype, actor.get("name", ""), {"swap_id": swap["id"], "type": etype, "url": f"/swap/{swap['id']}"})
+
+
 async def _add_message(
     swap_id: str,
     sender_id: Optional[str],
@@ -1428,11 +1954,16 @@ async def _add_message(
         last, last_key, last_params = text, key, params or {}
     else:
         last, last_key, last_params = (text or mtype), None, {}
-    await db.swaps.update_one(
-        {"id": swap_id},
-        {"$set": {"updated_at": now_utc(), "last_message": last,
-                  "last_message_key": last_key, "last_message_params": last_params}},
-    )
+    updates = {"updated_at": now_utc(), "last_message": last,
+               "last_message_key": last_key, "last_message_params": last_params}
+    if mtype in CHAT_MESSAGE_TYPES and sender_id:
+        # Unread tracking: when the conversation last got a real chat message, and the sender has
+        # obviously read everything up to their own message.
+        updates["last_chat_at"] = msg["created_at"]
+        swap = await db.swaps.find_one({"id": swap_id}, {"_id": 0, "requester_id": 1, "receiver_id": 1})
+        if swap and sender_id in (swap["requester_id"], swap["receiver_id"]):
+            updates[_read_field(swap, sender_id)] = msg["created_at"]
+    await db.swaps.update_one({"id": swap_id}, {"$set": updates})
     return msg
 
 
@@ -1451,6 +1982,9 @@ def clean_swap(s: dict) -> dict:
         "receiver_rated": s.get("receiver_rated", False),
         "active_proposal": dict(s["active_proposal"]) if s.get("active_proposal") else None,
         "updated_at": s.get("updated_at").isoformat() if s.get("updated_at") else None,
+        # The requester's optional note — part of the proposal, not a chat message.
+        "note": s.get("note"),
+        "chat_accepted": bool(s.get("chat_accepted_at")),
     }
 
 
@@ -1460,30 +1994,49 @@ async def _swap_with_meta(s: dict, me_id: str) -> dict:
     other = await db.users.find_one({"user_id": other_id}, {"_id": 0})
     cs["other_user"] = public_user(other) if other else {}
     cs["is_requester"] = s["requester_id"] == me_id
+    # Only my own "rated" flag: whether the other reader reviewed me (and so when) isn't mine to know —
+    # otherwise an anonymous review could be matched to the swap it came from.
+    cs.pop("receiver_rated" if cs["is_requester"] else "requester_rated", None)
     return cs
 
 
 @api.post("/swaps")
 async def create_swap(body: SwapCreate, user: dict = Depends(get_current_user)):
-    if body.receiver_id == user["user_id"]:
+    """A new swap proposal: optional books + optional note. It never opens the chat — the recipient
+    has to accept first (see _chat_state)."""
+    uid = user["user_id"]
+    if body.receiver_id == uid:
         raise HTTPException(status_code=400, detail="Cannot swap with yourself")
     receiver = await db.users.find_one({"user_id": body.receiver_id, "deleted_at": None})
     if not receiver:
         raise HTTPException(status_code=404, detail="User not found")
     existing = await db.swaps.find_one(
-        {
-            "$or": [
-                {"requester_id": user["user_id"], "receiver_id": body.receiver_id},
-                {"requester_id": body.receiver_id, "receiver_id": user["user_id"]},
-            ],
-            "status": {"$in": ["pending", "accepted", "active"]},
-        }
+        {"$and": [_pair_query(uid, body.receiver_id), {"status": {"$in": ["pending", *OPEN_ACTIVE_STATUSES]}}]}
     )
-    if existing:
-        return {"swap": await _swap_with_meta(existing, user["user_id"]), "existing": True}
+    if existing:  # one open swap per pair: hand back the existing one, never a duplicate
+        return {"swap": await _swap_with_meta(existing, uid), "existing": True}
+    # "Currently exchanging" OFF: nobody can start a new swap with this reader (existing swaps and
+    # conversations are untouched).
+    if not receiver.get("is_exchanging", True):
+        raise _coded(403, "not_exchanging", "This reader is not currently accepting exchanges")
+    note = clean_note(body.note if body.note is not None else body.message)
+    if bool(body.offered_book_id) != bool(body.requested_book_id):
+        raise HTTPException(status_code=400, detail="Choose both books, or neither")
+    offered = requested = None
+    if body.offered_book_id:
+        offered = await db.books.find_one(
+            {"id": body.offered_book_id, "owner_id": uid, "status": "Available", "deleted_at": None}, {"_id": 0})
+        requested = await db.books.find_one(
+            {"id": body.requested_book_id, "owner_id": body.receiver_id, "status": "Available", "deleted_at": None}, {"_id": 0})
+        if not offered:
+            raise HTTPException(status_code=400, detail="Offered book must be one of your available books")
+        if not requested:
+            raise HTTPException(status_code=400, detail="Requested book must be an available book of the other reader")
+    await _check_request_limits(uid, body.receiver_id)
+    now = now_utc()
     swap = {
         "id": new_id("swap"),
-        "requester_id": user["user_id"],
+        "requester_id": uid,
         "receiver_id": body.receiver_id,
         "status": "pending",
         "requester_completed": False,
@@ -1491,16 +2044,63 @@ async def create_swap(body: SwapCreate, user: dict = Depends(get_current_user)):
         "requester_rated": False,
         "receiver_rated": False,
         "active_proposal": None,
+        "note": note,
+        "chat_accepted_at": None,
         "last_message": "",
-        "created_at": now_utc(),
-        "updated_at": now_utc(),
+        "created_at": now,
+        "updated_at": now,
     }
-    await db.swaps.insert_one(swap)
+    await db.swaps.insert_one(dict(swap))
     await _add_message(swap["id"], None, "system", f"{user['name']} is interested in exchanging books.",
                        key="swapChat.sys.interested", params={"name": user["name"]})
-    if body.message:
-        await _add_message(swap["id"], user["user_id"], "text", body.message)
-    return {"swap": await _swap_with_meta(swap, user["user_id"]), "existing": False}
+    if offered:
+        proposal = {"proposer_id": uid, "offered_book_id": offered["id"], "requested_book_id": requested["id"]}
+        await db.swaps.update_one({"id": swap["id"]}, {"$set": {"active_proposal": proposal}})
+        swap["active_proposal"] = proposal
+        await _add_message(swap["id"], uid, "proposal", f"Proposed a swap: '{offered['title']}' ⇄ '{requested['title']}'",
+                           proposal, key="swapChat.sys.proposed",
+                           params={"offered": offered["title"], "requested": requested["title"]})
+    await _notify(body.receiver_id, "proposal_received", swap, user)
+    return {"swap": await _swap_with_meta(swap, uid), "existing": False}
+
+
+def _aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """Mongo hands datetimes back naive (they are stored in UTC)."""
+    return dt.replace(tzinfo=timezone.utc) if dt is not None and dt.tzinfo is None else dt
+
+
+# Unread tracking started when v2.2 first ran against this database (stored once in app_settings).
+# Conversations nobody has opened since then count only messages newer than that, so upgrading never
+# floods anyone with years of "unread" history.
+_unread_since: datetime = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+async def load_unread_since() -> None:
+    global _unread_since
+    try:
+        await db.app_settings.insert_one({"_id": "unread_tracking_since", "value": now_utc()})
+    except DuplicateKeyError:
+        pass
+    doc = await db.app_settings.find_one({"_id": "unread_tracking_since"})
+    _unread_since = _aware(doc["value"])
+
+
+async def _unread_counts(swaps: List[dict], uid: str) -> dict:
+    """swap id -> number of chat messages from the other reader the user hasn't read. Only
+    conversations with chat activity after the user's read marker are queried."""
+    out = {}
+    for s in swaps:
+        read_at = _aware(s.get(_read_field(s, uid))) or _unread_since
+        last_chat = _aware(s.get("last_chat_at"))
+        if not last_chat or last_chat <= read_at:
+            continue
+        n = await db.messages.count_documents({
+            "swap_id": s["id"], "sender_id": _other_id(s, uid), "type": {"$in": list(CHAT_MESSAGE_TYPES)},
+            "created_at": {"$gt": read_at},
+        })
+        if n:
+            out[s["id"]] = n
+    return out
 
 
 @api.get("/swaps")
@@ -1511,6 +2111,7 @@ async def list_swaps(user: dict = Depends(get_current_user)):
     ).sort("updated_at", -1).to_list(300)
     other_ids = {s["receiver_id"] if s["requester_id"] == uid else s["requester_id"] for s in swaps}
     others = {u["user_id"]: u for u in await db.users.find({"user_id": {"$in": list(other_ids)}}, {"_id": 0}).to_list(None)}
+    unread = await _unread_counts(swaps, uid)
     # Every swap lands in exactly one bucket, decided by its status alone:
     #   pending            -> incoming (I received it) / outgoing (I sent it)
     #   accepted / active  -> active
@@ -1521,6 +2122,8 @@ async def list_swaps(user: dict = Depends(get_current_user)):
         other = others.get(s["receiver_id"] if s["requester_id"] == uid else s["requester_id"])
         meta["other_user"] = public_user(other) if other else {}
         meta["is_requester"] = s["requester_id"] == uid
+        meta.pop("receiver_rated" if meta["is_requester"] else "requester_rated", None)  # see _swap_with_meta
+        meta["unread_count"] = unread.get(s["id"], 0)
         status = s["status"]
         if status == "pending":
             buckets["incoming" if s["receiver_id"] == uid else "outgoing"].append(meta)
@@ -1531,22 +2134,21 @@ async def list_swaps(user: dict = Depends(get_current_user)):
     return buckets
 
 
-OPEN_ACTIVE_STATUSES = ("accepted", "active")
-CLOSED_STATUSES = ("completed", "declined", "cancelled")
-
-
 @api.get("/swaps/with/{user_id}")
 async def swap_with_user(user_id: str, user: dict = Depends(get_current_user)):
     """The caller's open swap with this reader (pending/accepted/active), if any, and their most
-    recent swap of any status. Lets the app open an existing conversation instead of silently
-    starting a new request after a swap has finished."""
+    recent swap of any status, plus what the caller may do next: `can_propose` (the reader is
+    currently exchanging) and whether the latest conversation is still open to chat in."""
     uid = user["user_id"]
-    pair = {"$or": [{"requester_id": uid, "receiver_id": user_id}, {"requester_id": user_id, "receiver_id": uid}]}
-    open_swap = await db.swaps.find_one({**pair, "status": {"$in": ["pending", *OPEN_ACTIVE_STATUSES]}}, {"_id": 0})
+    pair = _pair_query(uid, user_id)
+    open_swap = await db.swaps.find_one({"$and": [pair, {"status": {"$in": ["pending", *OPEN_ACTIVE_STATUSES]}}]}, {"_id": 0})
     latest = await db.swaps.find_one(pair, {"_id": 0}, sort=[("updated_at", -1)])
+    other = await db.users.find_one({"user_id": user_id, "deleted_at": None}, {"_id": 0, "is_exchanging": 1})
     return {
         "open": await _swap_with_meta(open_swap, uid) if open_swap else None,
         "latest": await _swap_with_meta(latest, uid) if latest else None,
+        "can_propose": bool(other) and user_id != uid and other.get("is_exchanging", True),
+        "latest_chat_open": bool(latest) and await _chat_state(latest, uid) == CHAT_OPEN,
     }
 
 
@@ -1585,6 +2187,10 @@ async def get_swap(swap_id: str, after: Optional[str] = None, user: dict = Depen
     await _proposal_books([m["proposal"] for m in msgs if m.get("proposal")])
     if meta.get("active_proposal"):
         await _proposal_books([meta["active_proposal"]])
+    state = await _chat_state(s, user["user_id"])
+    # `chat` tells the app what to show instead of (or with) the composer; the server enforces it anyway.
+    meta["chat"] = {"state": state, "can_send": state == CHAT_OPEN}
+    meta["unread_count"] = (await _unread_counts([s], user["user_id"])).get(swap_id, 0)
     out = {"swap": meta, "messages": msgs, "full": full}
     # Shelves are only needed to make a proposal (pending swaps), and not on every poll.
     if full:
@@ -1626,7 +2232,11 @@ async def _release_books(book_ids: List[str]) -> None:
 @api.post("/swaps/{swap_id}/messages")
 async def send_message(swap_id: str, body: MessageBody, user: dict = Depends(get_current_user)):
     s = await _participant_swap(swap_id, user)
-    _require_status(s, "pending", "accepted", "active", "completed")
+    state = await _chat_state(s, user["user_id"])
+    if state == CHAT_CLOSED:
+        _require_status(s, *ACCEPTED_STATUSES, "pending")  # -> 409 "Swap is declined; action not allowed"
+    if state in (CHAT_LOCKED_WAITING, CHAT_LOCKED_NEEDS_YOU):
+        raise _coded(403, "chat_locked", "Chat opens once the other reader accepts the request")
     if not body.text.strip() and not body.image_url:
         raise HTTPException(status_code=400, detail="Empty message")
     if body.client_id:
@@ -1638,6 +2248,10 @@ async def send_message(swap_id: str, body: MessageBody, user: dict = Depends(get
             return {"message": prior, "duplicate": True}
     mtype = "image" if body.image_url else "text"
     msg = await _add_message(swap_id, user["user_id"], mtype, body.text, image_url=body.image_url, client_id=body.client_id)
+    other_id = _other_id(s, user["user_id"])
+    other = await db.users.find_one({"user_id": other_id}, {"_id": 0, "preferred_language": 1})
+    preview = body.text.strip()[:140] if mtype == "text" else _push_text((other or {}).get("preferred_language"), "photo", "")
+    await _push(other_id, "message", user.get("name", ""), {"swap_id": swap_id, "type": "message", "url": f"/swap/{swap_id}"}, preview)
     msg["created_at"] = msg["created_at"].isoformat()
     return {"message": msg}
 
@@ -1647,6 +2261,12 @@ async def propose(swap_id: str, body: ProposeBody, user: dict = Depends(get_curr
     s = await _participant_swap(swap_id, user)
     _require_status(s, "pending")
     other_id = s["receiver_id"] if s["requester_id"] == user["user_id"] else s["requester_id"]
+    # A proposal is structured (two books), never free text — but each one still reaches the other
+    # reader, so a requester whose request hasn't been accepted can only revise it a few times.
+    if user["user_id"] == s["requester_id"] and await _chat_state(s, user["user_id"]) == CHAT_LOCKED_WAITING:
+        sent = await db.messages.count_documents({"swap_id": swap_id, "sender_id": user["user_id"], "type": "proposal"})
+        if sent >= LOCKED_PROPOSALS_MAX:
+            raise _coded(429, "proposal_limit", "Wait for the other reader to respond before changing the proposal again")
     offered = await db.books.find_one(
         {"id": body.offered_book_id, "owner_id": user["user_id"], "status": "Available", "deleted_at": None}, {"_id": 0}
     )
@@ -1669,6 +2289,7 @@ async def propose(swap_id: str, body: ProposeBody, user: dict = Depends(get_curr
     text = f"Proposed a swap: '{offered['title']}' ⇄ '{requested['title']}'"
     await _add_message(swap_id, user["user_id"], "proposal", text, proposal, key="swapChat.sys.proposed",
                        params={"offered": offered["title"], "requested": requested["title"]})
+    await _notify(other_id, "proposal_received", s, user)
     return {"ok": True}
 
 
@@ -1692,12 +2313,60 @@ async def accept_swap(swap_id: str, user: dict = Depends(get_current_user)):
             await _release_books(claimed)
             raise HTTPException(status_code=409, detail="One of the proposed books is no longer available")
         claimed.append(bid)
-    res = await db.swaps.update_one({"id": swap_id, "status": "pending"}, {"$set": {"status": "active"}})
+    now = now_utc()
+    res = await db.swaps.update_one(
+        {"id": swap_id, "status": "pending"},
+        # accepted_at marks the pair as having "met": their chats stay open even if this is cancelled.
+        {"$set": {"status": "active", "accepted_at": now, "chat_accepted_at": s.get("chat_accepted_at") or now}},
+    )
     if res.matched_count == 0:
         await _release_books(claimed)
         raise HTTPException(status_code=409, detail="Swap is no longer pending")
     await _add_message(swap_id, user["user_id"], "system", "Swap confirmed! Arrange to meet locally.",
                        key="swapChat.sys.confirmed")
+    await _notify(_other_id(s, user["user_id"]), "proposal_accepted", s, user)
+    return {"ok": True}
+
+
+@api.post("/swaps/{swap_id}/allow-chat")
+async def allow_chat(swap_id: str, user: dict = Depends(get_current_user)):
+    """"Accept to continue chatting": the recipient opens the conversation without accepting the
+    books yet. Only the recipient can do this, only while the request is pending."""
+    s = await _participant_swap(swap_id, user)
+    if user["user_id"] != s["receiver_id"]:
+        raise _coded(403, "only_recipient", "Only the reader who received the request can accept it")
+    _require_status(s, "pending")
+    if s.get("chat_accepted_at"):
+        return {"ok": True, "already": True}
+    res = await db.swaps.update_one(
+        {"id": swap_id, "status": "pending", "chat_accepted_at": None}, {"$set": {"chat_accepted_at": now_utc()}}
+    )
+    if res.modified_count == 0:
+        return {"ok": True, "already": True}
+    await _add_message(swap_id, user["user_id"], "system", f"{user['name']} accepted the request. You can chat now.",
+                       key="swapChat.sys.chatAccepted", params={"name": user["name"]})
+    await _notify(s["requester_id"], "chat_accepted", s, user)
+    return {"ok": True, "already": False}
+
+
+@api.post("/swaps/{swap_id}/read")
+async def mark_swap_read(swap_id: str, body: Optional[ReadBody] = None, user: dict = Depends(get_current_user)):
+    """The reader has seen this conversation up to `message_id` (or up to now). Also marks the
+    swap's notification events read. Never moves the marker backwards."""
+    s = await _participant_swap(swap_id, user)
+    upto = now_utc()
+    if body and body.message_id:
+        anchor = await db.messages.find_one({"id": body.message_id, "swap_id": swap_id}, {"_id": 0, "created_at": 1})
+        if not anchor:
+            raise HTTPException(status_code=404, detail="Message not found")
+        upto = _aware(anchor["created_at"])
+    field = _read_field(s, user["user_id"])
+    await db.swaps.update_one(
+        {"id": swap_id, "$or": [{field: None}, {field: {"$lt": upto}}]}, {"$set": {field: upto}}
+    )
+    await db.notifications.update_many(
+        {"user_id": user["user_id"], "swap_id": swap_id, "read_at": None}, {"$set": {"read_at": now_utc()}}
+    )
     return {"ok": True}
 
 
@@ -1713,6 +2382,7 @@ async def decline_swap(swap_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=409, detail="Swap is no longer pending")
     await _add_message(swap_id, user["user_id"], "system", f"{user['name']} declined the swap.",
                        key="swapChat.sys.declined", params={"name": user["name"]})
+    await _notify(_other_id(s, user["user_id"]), "proposal_declined", s, user)
     return {"ok": True}
 
 
@@ -1731,6 +2401,7 @@ async def cancel_swap(swap_id: str, user: dict = Depends(get_current_user)):
         await _set_proposal_books(s.get("active_proposal"), "Reserved", "Available")
     await _add_message(swap_id, user["user_id"], "system", f"{user['name']} cancelled the swap.",
                        key="swapChat.sys.cancelled", params={"name": user["name"]})
+    await _notify(_other_id(s, user["user_id"]), "proposal_cancelled", s, user)
     return {"ok": True}
 
 
@@ -1792,10 +2463,13 @@ async def rate_swap(swap_id: str, body: RateBody, user: dict = Depends(get_curre
         {
             "id": new_id("rate"),
             "swap_id": swap_id,
+            # Always stored, anonymous or not: anonymity only hides the reviewer from other users
+            # (eligibility, duplicate prevention and moderation still need to know who wrote it).
             "rater_id": user["user_id"],
             "ratee_id": ratee_id,
             "stars": stars,
-            "review": body.review or "",
+            "review": clean_note_text(body.review, REVIEW_MAX_CHARS),
+            "is_anonymous": bool(body.is_anonymous),
             "created_at": now_utc(),
         }
     )
@@ -1804,10 +2478,17 @@ async def rate_swap(swap_id: str, body: RateBody, user: dict = Depends(get_curre
 
 
 # ----------------------------------------------------------------------------
-# Notifications (derived)
+# Notifications: stored events (proposal received/accepted/declined/cancelled, chat accepted) plus
+# unread chat messages derived per conversation. Swap status and message notifications are separate:
+# a completed swap's conversation still produces unread messages.
 # ----------------------------------------------------------------------------
+async def _my_swaps(uid: str) -> List[dict]:
+    return await db.swaps.find({"$or": [{"requester_id": uid}, {"receiver_id": uid}]}, {"_id": 0}).to_list(500)
+
+
 @api.get("/notifications")
 async def notifications(user: dict = Depends(get_current_user)):
+    """Counters for badges. `unread_total` drives the bell; the older fields stay for older app builds."""
     uid = user["user_id"]
     incoming = await db.swaps.count_documents({"receiver_id": uid, "status": "pending"})
     active = await db.swaps.count_documents(
@@ -1818,7 +2499,146 @@ async def notifications(user: dict = Depends(get_current_user)):
     ) + await db.swaps.count_documents(
         {"receiver_id": uid, "status": "completed", "receiver_rated": False}
     )
-    return {"incoming_requests": incoming, "active_swaps": active, "to_rate": to_rate, "total": incoming + to_rate}
+    unread_messages = sum((await _unread_counts(await _my_swaps(uid), uid)).values())
+    unread_events = await db.notifications.count_documents({"user_id": uid, "read_at": None})
+    return {
+        "incoming_requests": incoming, "active_swaps": active, "to_rate": to_rate,
+        # Older builds show their bell dot for `total`; new messages are included so they see them too.
+        "total": incoming + to_rate + unread_messages,
+        "unread_messages": unread_messages, "unread_events": unread_events,
+        "unread_total": unread_messages + unread_events,
+    }
+
+
+@api.get("/notifications/feed")
+async def notification_feed(user: dict = Depends(get_current_user)):
+    """The notification center: one row per conversation with unread messages, then events, newest
+    first. Reading the feed does not mark anything read."""
+    uid = user["user_id"]
+    swaps = await _my_swaps(uid)
+    by_id = {s["id"]: s for s in swaps}
+    unread = await _unread_counts(swaps, uid)
+    events = await db.notifications.find({"user_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    actor_ids = {e["actor_id"] for e in events} | {_other_id(by_id[sid], uid) for sid in unread}
+    actors = {u["user_id"]: u for u in await db.users.find({"user_id": {"$in": list(actor_ids)}}, {"_id": 0}).to_list(None)}
+
+    def actor(aid):
+        a = actors.get(aid)
+        return {"user_id": aid, "name": a.get("name", ""), "avatar_url": a.get("avatar_url")} if a else {"user_id": aid, "name": "", "avatar_url": None}
+
+    items = []
+    for sid, n in unread.items():
+        s = by_id[sid]
+        items.append({
+            "id": f"msg_{sid}", "kind": "message", "type": "message", "swap_id": sid, "swap_status": s["status"],
+            "actor": actor(_other_id(s, uid)), "unread_count": n, "read": False,
+            "last_message": s.get("last_message", ""), "last_message_key": s.get("last_message_key"),
+            "last_message_params": s.get("last_message_params") or {},
+            "created_at": _aware(s.get("last_chat_at")).isoformat(),
+        })
+    for e in events:
+        s = by_id.get(e["swap_id"])
+        items.append({
+            "id": e["id"], "kind": "event", "type": e["type"], "swap_id": e["swap_id"],
+            "swap_status": s["status"] if s else None, "actor": actor(e["actor_id"]),
+            "read": e.get("read_at") is not None, "created_at": _aware(e["created_at"]).isoformat(),
+        })
+    items.sort(key=lambda i: i["created_at"], reverse=True)
+    unread_events = sum(1 for e in events if e.get("read_at") is None)
+    return {"items": items, "unread_total": sum(unread.values()) + unread_events}
+
+
+@api.post("/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str, user: dict = Depends(get_current_user)):
+    res = await db.notifications.update_one(
+        {"id": notification_id, "user_id": user["user_id"]}, {"$set": {"read_at": now_utc()}}
+    )
+    if res.matched_count == 0:  # someone else's (or no such) notification: never reveal which
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"ok": True}
+
+
+@api.post("/notifications/read-all")
+async def mark_all_notifications_read(user: dict = Depends(get_current_user)):
+    """Explicit "mark all as read": every event and every conversation, up to now."""
+    uid, now = user["user_id"], now_utc()
+    await db.notifications.update_many({"user_id": uid, "read_at": None}, {"$set": {"read_at": now}})
+    await db.swaps.update_many({"requester_id": uid}, {"$set": {"requester_read_at": now}})
+    await db.swaps.update_many({"receiver_id": uid}, {"$set": {"receiver_read_at": now}})
+    return {"ok": True}
+
+
+# ----------------------------------------------------------------------------
+# Push tokens (Expo). A token belongs to one device; signing in on that device moves it to that user.
+# ----------------------------------------------------------------------------
+@api.post("/push/register")
+async def register_push_token(body: PushTokenBody, user: dict = Depends(get_current_user)):
+    token = body.token.strip()
+    if not PUSH_TOKEN_RE.match(token):
+        raise HTTPException(status_code=400, detail="Invalid push token")
+    await db.push_tokens.update_one(
+        {"token": token},
+        {"$set": {"user_id": user["user_id"], "platform": (body.platform or "")[:20], "updated_at": now_utc()},
+         "$setOnInsert": {"created_at": now_utc()}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api.post("/push/unregister")
+async def unregister_push_token(body: PushTokenBody, user: dict = Depends(get_current_user)):
+    await db.push_tokens.delete_one({"token": body.token.strip(), "user_id": user["user_id"]})
+    return {"ok": True}
+
+
+# ----------------------------------------------------------------------------
+# Favorites: private bookmarks of other readers. Stored as (user_id, target_id) pairs only. Adding one
+# notifies nobody and grants nothing (no chat access, no swap).
+# ----------------------------------------------------------------------------
+@api.get("/favorites")
+async def list_favorites(user: dict = Depends(get_current_user)):
+    favs = await db.favorites.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    ids = [f["target_id"] for f in favs]
+    people = {u["user_id"]: u for u in await db.users.find({"user_id": {"$in": ids}, "deleted_at": None}, {"_id": 0}).to_list(None)}
+    counts: dict = {}
+    for b in await db.books.find({"owner_id": {"$in": ids}, "status": "Available", "deleted_at": None},
+                                 {"_id": 0, "owner_id": 1}).to_list(None):
+        counts[b["owner_id"]] = counts.get(b["owner_id"], 0) + 1
+    out = []
+    for tid in ids:
+        p = people.get(tid)
+        if not p:  # deleted account: its favorite simply stops showing
+            continue
+        pu = public_user(p)
+        pu["distance_km"] = user_distance_km(user, p)
+        pu["available_count"] = counts.get(tid, 0)
+        pu["is_favorite"] = True
+        out.append(pu)
+    return {"favorites": out}
+
+
+@api.put("/favorites/{target_id}")
+async def add_favorite(target_id: str, user: dict = Depends(get_current_user)):
+    if target_id == user["user_id"]:
+        raise _coded(400, "cannot_favorite_self", "You can't favorite yourself")
+    if not await db.users.find_one({"user_id": target_id, "deleted_at": None}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="User not found")
+    # Upsert on the unique (user_id, target_id) pair: repeating the call never creates a duplicate.
+    try:
+        await db.favorites.update_one(
+            {"user_id": user["user_id"], "target_id": target_id},
+            {"$setOnInsert": {"created_at": now_utc()}},
+            upsert=True,
+        )
+    except DuplicateKeyError:  # two taps racing: the other one already inserted it
+        pass
+    return {"ok": True, "is_favorite": True}
+
+
+@api.delete("/favorites/{target_id}")
+async def remove_favorite(target_id: str, user: dict = Depends(get_current_user)):
+    await db.favorites.delete_one({"user_id": user["user_id"], "target_id": target_id})
+    return {"ok": True, "is_favorite": False}
 
 
 # ----------------------------------------------------------------------------
@@ -1917,6 +2737,11 @@ async def startup():
     await db.oauth_states.create_index("created_at", expireAfterSeconds=600)
     await db.google_logins.create_index("sid", unique=True)
     await db.google_logins.create_index("created_at", expireAfterSeconds=120)
+    # v2.2 provider identities (additive; legacy Google accounts get theirs on their next Google sign-in).
+    await db.auth_identities.create_index([("provider", 1), ("subject", 1)], unique=True)
+    await db.auth_identities.create_index([("user_id", 1), ("provider", 1)], unique=True)
+    await db.apple_nonces.create_index("id", unique=True)
+    await db.apple_nonces.create_index("created_at", expireAfterSeconds=600)
     # Registration OTP: pending registrations self-clean after a day of inactivity (a user who never
     # finishes signing up); email verification tokens are single-use and expire fast either way, but
     # the TTL index also clears any left stranded by a crash between verify-otp and complete.
@@ -1929,6 +2754,15 @@ async def startup():
     await db.swaps.create_index("receiver_id")
     # Chat loads and polls read one swap's messages in time order.
     await db.messages.create_index([("swap_id", 1), ("created_at", 1)])
+    # v2.2 — all additive: new collections and indexes only; no existing document is rewritten.
+    await db.favorites.create_index([("user_id", 1), ("target_id", 1)], unique=True)
+    await db.notifications.create_index("id", unique=True)
+    await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
+    await db.notifications.create_index([("user_id", 1), ("swap_id", 1), ("read_at", 1)])
+    await db.push_tokens.create_index("token", unique=True)
+    await db.push_tokens.create_index("user_id")
+    await db.swaps.create_index([("requester_id", 1), ("created_at", -1)])
+    await load_unread_since()
     await run_in_threadpool(init_storage)
     logger.info(f"File storage: {STORAGE_DIR}")
     try:

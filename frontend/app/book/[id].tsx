@@ -82,7 +82,9 @@ export default function BookDetail() {
         userId: data!.owner.user_id,
         name: data!.owner.name?.split(" ")[0] || "",
         t,
+        bookId: id,
         open: (swapId) => router.push(`/swap/${swapId}`),
+        compose: (userId, bookId) => router.push({ pathname: "/swap/new", params: bookId ? { userId, bookId } : { userId } }),
         onError: (message) => toast(message || t("bookDetail.couldNotStartSwap"), "error"),
       });
     } catch (e: any) {

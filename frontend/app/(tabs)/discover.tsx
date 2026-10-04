@@ -4,7 +4,7 @@ import { useRouter, useNavigation } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from "@gorhom/bottom-sheet";
-import { MagnifyingGlass, SlidersHorizontal, Bell, BookOpen, Sparkle, ArrowRight } from "phosphor-react-native";
+import { MagnifyingGlass, SlidersHorizontal, Bell, BookOpen, Sparkle, ArrowRight, Heart } from "phosphor-react-native";
 
 import { AppText, Chip, ChipRow, Field, Button, EmptyState, DirectionalIcon, haptic, useDirectionalStyle } from "@/src/components/ui";
 import { Logo } from "@/src/components/Logo";
@@ -18,6 +18,7 @@ import { GENRES, LANGUAGES, DISTANCES } from "@/src/constants";
 import { enumLabel } from "@/src/i18n/enums";
 import { makeStyles, useTheme } from "@/src/theme";
 import { fontsForLanguage } from "@/src/typography";
+import { hasUnread } from "@/src/swapFlow";
 
 export default function Discover() {
   const styles = useStyles();
@@ -67,9 +68,10 @@ export default function Discover() {
     return unsubscribe;
   }, [navigation]);
 
+  // Same query (and cache) the tab bar polls: unread messages (completed swaps included) + unread events.
   const { data: notif } = useQuery({
     queryKey: ["notifications"],
-    queryFn: () => apiFetch<{ total: number }>("/api/notifications"),
+    queryFn: () => apiFetch<{ total: number; unread_total?: number }>("/api/notifications"),
   });
 
   const peopleQ = useQuery({
@@ -158,10 +160,27 @@ export default function Discover() {
       <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
         <View style={styles.topRow}>
           <Logo variant="wordmark" height={24} />
-          <Pressable testID="notif-bell" onPress={() => router.push("/(tabs)/swaps")} style={styles.bell}>
-            <Bell size={22} color={colors.onSurface} weight="regular" />
-            {(notif?.total || 0) > 0 && <View style={bellDotStyle} />}
-          </Pressable>
+          <View style={styles.topActions}>
+            <Pressable
+              testID="favorites-button"
+              onPress={() => router.push("/favorites")}
+              style={styles.bell}
+              accessibilityRole="button"
+              accessibilityLabel={t("favorites.title")}
+            >
+              <Heart size={22} color={colors.onSurface} weight="regular" />
+            </Pressable>
+            <Pressable
+              testID="notif-bell"
+              onPress={() => router.push("/notifications")}
+              style={styles.bell}
+              accessibilityRole="button"
+              accessibilityLabel={t("notifications.title")}
+            >
+              <Bell size={22} color={colors.onSurface} weight="regular" />
+              {hasUnread(notif) && <View testID="notif-dot" style={bellDotStyle} />}
+            </Pressable>
+          </View>
         </View>
 
         <AppText variant="display" style={{ marginTop: 6, marginBottom: 12 }}>
@@ -331,6 +350,7 @@ const useStyles = makeStyles((colors) => ({
   root: { flex: 1, backgroundColor: colors.surface },
   header: { paddingHorizontal: 20, backgroundColor: colors.surface },
   topRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  topActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   bell: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   bellDot: { position: "absolute", top: 10, right: 12, width: 9, height: 9, borderRadius: 5, backgroundColor: colors.notification },
   searchRow: { flexDirection: "row", gap: 10, alignItems: "center" },

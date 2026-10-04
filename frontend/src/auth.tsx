@@ -5,6 +5,8 @@ import * as WebBrowser from "expo-web-browser";
 
 import { API_BASE, ApiError, apiFetch, clearToken, getToken, saveToken, setMemToken, setUnauthorizedHandler } from "@/src/api";
 import { queryClient } from "@/src/query-client";
+import { unregisterThisDevice } from "@/src/notifications";
+import { appleCredential } from "@/src/socialAuth";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -32,6 +34,8 @@ export type User = {
   preferred_language?: string | null;
   /** False only right after a brand-new registration, until the one-time Welcome screen is dismissed. */
   onboarding_completed: boolean;
+  /** Push notifications opt-in (Profile -> Notifications). Absent from older servers = off. */
+  notifications_enabled?: boolean;
 };
 
 /** Response shape shared by request-otp and resend-otp. `debug_otp` only exists when the backend's
@@ -55,6 +59,8 @@ type AuthContextType = {
   completeOnboarding: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
+  /** Native Sign in with Apple (iOS). Resolves false when the user cancelled the Apple sheet. */
+  loginWithApple: () => Promise<boolean>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   setUser: (u: User) => void;
@@ -294,7 +300,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [processSessionId]);
 
+  const loginWithApple = useCallback(async () => {
+    const cred = await appleCredential();
+    if (!cred) return false;
+    const data = await apiFetch<{ session_token: string; user: User }>("/api/auth/apple", { method: "POST", body: cred });
+    await applySession(data.session_token, data.user);
+    return true;
+  }, [applySession]);
+
   const logout = useCallback(async () => {
+    // This device must stop receiving the account's pushes; done while the session still works.
+    await unregisterThisDevice();
     try {
       await apiFetch("/api/auth/logout", { method: "POST" });
     } catch {}
@@ -342,6 +358,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         completeOnboarding,
         login,
         loginWithGoogle,
+        loginWithApple,
         logout,
         refreshUser,
         setUser,

@@ -5,11 +5,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import * as Clipboard from "expo-clipboard";
-import { MapPin, PencilSimple, SignOut, UserPlus, Copy, ShareNetwork, Sparkle, CaretRight, Translate, CircleHalf, Sun, Moon } from "phosphor-react-native";
+import { MapPin, PencilSimple, SignOut, UserPlus, Copy, ShareNetwork, Sparkle, CaretRight, Translate, CircleHalf, Sun, Moon, UserGear } from "phosphor-react-native";
 
 import { AppText, Avatar, Button, RatingPill, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
 import { BookTile, Book } from "@/src/components/cards";
 import { BadgeGrid } from "@/src/components/badges";
+import { NotificationsSetting } from "@/src/components/NotificationsSetting";
 import { useAuth, type User } from "@/src/auth";
 import { apiFetch } from "@/src/api";
 import { useAppearance } from "@/src/appearance";
@@ -148,12 +149,19 @@ export default function Profile() {
       </View>
 
       <View style={styles.stats}>
-        <View style={styles.statCell}>
+        {/* Reviews I received (anonymous ones show as "BookLoop member" — the server never says who). */}
+        <Pressable
+          testID="my-reviews"
+          onPress={() => router.push(`/reviews/${user.user_id}`)}
+          style={styles.statCell}
+          accessibilityRole="button"
+          accessibilityLabel={t("profile.receivedReviews")}
+        >
           <RatingPill rating={user.rating} />
           <AppText variant="caption" color={colors.muted}>
             {t("profile.reviewsCount", { count: user.rating_count })}
           </AppText>
-        </View>
+        </Pressable>
         <View style={styles.statDivider} />
         <View style={styles.statCell}>
           <AppText variant="heading">{user.swaps_count}</AppText>
@@ -181,7 +189,7 @@ export default function Profile() {
         <View style={{ flex: 1 }}>
           <AppText variant="heading">{t("profile.currentlyExchanging")}</AppText>
           <AppText variant="caption" color={colors.muted}>
-            {user.is_exchanging ? t("profile.visibleNearby") : t("profile.hiddenFromDiscovery")}
+            {user.is_exchanging ? t("profile.visibleNearby") : t("profile.notAcceptingExchanges")}
           </AppText>
         </View>
         <View style={[styles.switch, user.is_exchanging && styles.switchOn]}>
@@ -331,6 +339,25 @@ export default function Profile() {
         </Pressable>
         <QuickAppearanceToggle />
       </View>
+
+      {/* Notifications: asks for the OS permission only when switched on here. */}
+      <NotificationsSetting />
+
+      {/* Account: sign-in methods (email/password, Google, Apple) and linking. */}
+      <Pressable testID="account-settings" onPress={() => router.push("/settings/account")} style={[styles.langCard, { marginTop: 12 }]}>
+        <View style={styles.langIcon}>
+          <UserGear size={22} color={colors.onBrandPrimary} weight="fill" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <AppText variant="heading">{t("account.title")}</AppText>
+          <AppText variant="caption" color={colors.muted}>
+            {t("account.rowSubtitle")}
+          </AppText>
+        </View>
+        <DirectionalIcon>
+          <CaretRight size={18} color={colors.muted} weight="bold" />
+        </DirectionalIcon>
+      </Pressable>
     </ScrollView>
   );
 }

@@ -3,11 +3,15 @@ import { View, ScrollView, Pressable, ActivityIndicator, useWindowDimensions } f
 import { useLocalSearchParams, useRouter, Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, MapPin, ArrowsClockwise, ArrowRight, Sparkle } from "phosphor-react-native";
+import { ArrowLeft, MapPin, ArrowsClockwise, ArrowRight, Sparkle, ChatCircleDots, PauseCircle } from "phosphor-react-native";
 
-import { AppText, Avatar, Button, Stars, RatingPill, ExchangingDot, EmptyState, DirectionalIcon, haptic, useToast, useDirectionalStyle } from "@/src/components/ui";
+import { ReviewCard } from "@/src/components/ReviewCard";
+import { AppText, Avatar, Button, RatingPill, ExchangingDot, EmptyState, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
 import { BookTile, Book } from "@/src/components/cards";
 import { BadgeChips } from "@/src/components/badges";
+import { FavoriteButton } from "@/src/components/FavoriteButton";
+import { useAuth } from "@/src/auth";
+import type { SwapWith } from "@/src/swapFlow";
 import { apiFetch } from "@/src/api";
 import { distanceOrArea } from "@/src/distance";
 import { openOrRequestSwap } from "@/src/swapStart";
@@ -27,13 +31,23 @@ export default function PersonProfile() {
   const col = (width - 40 - 14) / 2;
   // Pushes the star rating to the trailing edge; `marginLeft: auto` does not
   // auto-mirror, so swap it under RTL.
-  const pushEndStyle = useDirectionalStyle({ marginLeft: "auto" as const });
   const [requesting, setRequesting] = useState(false);
+  const { user: me } = useAuth();
+  const isMe = me?.user_id === id;
 
   const { data, isLoading } = useQuery({
     queryKey: ["person", id],
     queryFn: () => apiFetch<{ user: any; books: Book[]; reviews: any[] }>(`/api/users/${id}`),
   });
+  // What this viewer may do with this reader: an open swap, a conversation still open to chat
+  // (previous partners), and whether new proposals are accepted ("Currently exchanging").
+  const { data: rel } = useQuery({
+    queryKey: ["swapWith", id],
+    enabled: !isMe,
+    queryFn: () => apiFetch<SwapWith>(`/api/swaps/with/${encodeURIComponent(id)}`),
+  });
+  const chatSwapId = rel?.open?.id || (rel?.latest_chat_open ? rel?.latest?.id : undefined);
+  const canPropose = data?.user?.is_exchanging !== false && rel?.can_propose !== false;
 
   const requestSwap = async () => {
     haptic("light");
@@ -47,6 +61,7 @@ export default function PersonProfile() {
           haptic("success");
           router.push(`/swap/${swapId}`);
         },
+        compose: (userId) => router.push({ pathname: "/swap/new", params: { userId } }),
         onError: (message) => toast(message || t("person.couldNotStartSwap"), "error"),
       });
     } catch (e: any) {
@@ -66,14 +81,18 @@ export default function PersonProfile() {
           </DirectionalIcon>
         </Pressable>
         <AppText variant="heading">{t("person.title")}</AppText>
-        <View style={{ width: 42 }} />
+        {isMe || !data ? (
+          <View style={{ width: 42 }} />
+        ) : (
+          <FavoriteButton userId={id} isFavorite={!!data.user.is_favorite} style={styles.backBtn} />
+        )}
       </View>
 
       {isLoading || !data ? (
         <ActivityIndicator color={colors.brandPrimary} style={{ marginTop: 60 }} />
       ) : (
         <>
-          <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+          <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 190 }} showsVerticalScrollIndicator={false}>
             <View style={{ alignItems: "center", gap: 8 }}>
               <Avatar uri={data.user.avatar_url} name={data.user.name} size={88} />
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -162,16 +181,7 @@ export default function PersonProfile() {
             {data.reviews.length > 0 ? (
               <View style={{ gap: 12, marginTop: 12 }}>
                 {data.reviews.slice(0, 2).map((r: any) => (
-                  <View key={r.id} style={styles.review}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                      <Avatar uri={r.rater_avatar} name={r.rater_name} size={32} />
-                      <AppText variant="label">{r.rater_name}</AppText>
-                      <View style={pushEndStyle}>
-                        <Stars value={r.stars} />
-                      </View>
-                    </View>
-                    {r.review ? <AppText variant="body" color={colors.muted}>{r.review}</AppText> : null}
-                  </View>
+                  <ReviewCard key={r.id} review={r} compact />
                 ))}
               </View>
             ) : (
@@ -181,15 +191,40 @@ export default function PersonProfile() {
             )}
           </ScrollView>
 
-          <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
-            <Button
-              testID="request-swap-button"
-              title={t("person.requestSwap")}
-              icon={<ArrowsClockwise size={18} color={colors.onBrandPrimary} weight="bold" />}
-              onPress={requestSwap}
-              loading={requesting}
-            />
-          </View>
+          {!isMe && (
+            <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
+              {canPropose ? (
+                <Button
+                  testID="request-swap-button"
+                  title={rel?.open ? t("person.openChat") : t("person.requestSwap")}
+                  icon={<ArrowsClockwise size={18} color={colors.onBrandPrimary} weight="bold" />}
+                  onPress={requestSwap}
+                  loading={requesting}
+                />
+              ) : (
+                <View style={{ gap: 10 }}>
+                  <View testID="not-accepting-exchanges" style={styles.pausedRow}>
+                    <PauseCircle size={20} color={colors.muted} />
+                    <View style={{ flex: 1 }}>
+                      <AppText variant="label">{t("person.notAccepting")}</AppText>
+                      <AppText variant="caption" color={colors.muted}>
+                        {t("person.notAcceptingBody", { name: data.user.name?.split(" ")[0] })}
+                      </AppText>
+                    </View>
+                  </View>
+                  {chatSwapId && (
+                    <Button
+                      testID="open-chat-button"
+                      title={t("person.openChat")}
+                      variant="outline"
+                      icon={<ChatCircleDots size={18} color={colors.brandPrimary} weight="bold" />}
+                      onPress={() => router.push(`/swap/${chatSwapId}`)}
+                    />
+                  )}
+                </View>
+              )}
+            </View>
+          )}
         </>
       )}
     </View>
@@ -206,4 +241,5 @@ const useStyles = makeStyles((colors) => ({
   review: { backgroundColor: colors.surfaceSecondary, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.border },
   reviewsHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 28 },
   footer: { position: "absolute", bottom: 0, left: 0, right: 0, paddingHorizontal: 20, paddingTop: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
+  pausedRow: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.surfaceTertiary, borderRadius: 14, padding: 12 },
 }));

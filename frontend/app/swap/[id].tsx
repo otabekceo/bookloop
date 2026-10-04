@@ -1,14 +1,14 @@
-import { useRef, useState, useCallback, useMemo } from "react";
-import { View, FlatList, Pressable, TextInput, ActivityIndicator, ScrollView } from "react-native";
-import { useLocalSearchParams, useRouter, Stack } from "expo-router";
+import { useRef, useState, useCallback, useMemo, useEffect } from "react";
+import { View, FlatList, Pressable, TextInput, ActivityIndicator, useWindowDimensions, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { useLocalSearchParams, useRouter, Stack, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from "@gorhom/bottom-sheet";
+import BottomSheet, { BottomSheetBackdrop, BottomSheetScrollView, BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import { Image } from "expo-image";
-import { ArrowLeft, PaperPlaneRight, ArrowsClockwise, Star, CheckCircle, X, ImageSquare } from "phosphor-react-native";
+import { ArrowLeft, PaperPlaneRight, ArrowsClockwise, Star, CheckCircle, ImageSquare, Quotes, LockSimple, ChatCircleDots, UserCircle } from "phosphor-react-native";
 
-import { AppText, Avatar, Button, BookCover, Stars, DirectionalIcon, haptic, useToast, useDirectionalStyle } from "@/src/components/ui";
+import { AppText, Avatar, Button, BookCover, DirectionalIcon, haptic, useToast, useDirectionalStyle } from "@/src/components/ui";
 import { apiFetch, resolveImage } from "@/src/api";
 import { pickImage, uploadWithProgress, openSettings } from "@/src/media";
 import { useAuth } from "@/src/auth";
@@ -16,6 +16,10 @@ import { makeStyles, useTheme } from "@/src/theme";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { renderKeyed, badgeLabel } from "@/src/i18n/messageKeys";
 import { mergeMessages, newClientId, withOutbox, type OutboxItem } from "@/src/chatMessages";
+import { chatPanel } from "@/src/swapFlow";
+import { rateBody, REVIEW_MAX_CHARS } from "@/src/reviews";
+import { BookPicker } from "@/src/components/BookPicker";
+import { setActiveSwap } from "@/src/notifications";
 
 type ChatData = { swap: any; messages: any[]; my_books: any[]; their_books: any[] };
 
@@ -28,12 +32,21 @@ const STATUS_KEYS: Record<string, string> = {
   cancelled: "swaps.statusCancelled",
 };
 
+// How close to the bottom (px) still counts as "reading the latest messages".
+const NEAR_END_PX = 80;
+// Clear space kept between the composer and the top of the keyboard.
+const KEYBOARD_GAP = 8;
+
 export default function SwapChat() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const styles = useStyles();
   const { colors } = useTheme();
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
+  // A photo fills its bubble (72% of the list width minus the bubble's padding), capped at 200: a fixed
+  // 200 overflowed the bubble on 320 dp phones.
+  const chatImageSize = Math.min(200, Math.floor((screenWidth - 32) * 0.72) - 12);
   const router = useRouter();
   const toast = useToast();
   const qc = useQueryClient();
@@ -52,6 +65,11 @@ export default function SwapChat() {
   const [getId, setGetId] = useState<string | null>(null);
   const [stars, setStars] = useState(5);
   const [review, setReview] = useState("");
+  const [anonymous, setAnonymous] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const nearEnd = useRef(true);
+  const listHeight = useRef(0);
+  const reportedRead = useRef<string | null>(null);
 
   // Chat bubble "tails" are physical corners; mirror them under RTL so the tail
   // keeps pointing away from the sender's side after the row flips.
@@ -90,7 +108,38 @@ export default function SwapChat() {
     refetch();
     qc.invalidateQueries({ queryKey: ["swaps"] });
     qc.invalidateQueries({ queryKey: ["notifications"] });
+    qc.invalidateQueries({ queryKey: ["notificationFeed"] });
   }, [refetch, qc]);
+
+  // While this conversation is on screen: pushes about it aren't shown on top of it, and what is on
+  // screen counts as read (only then — loading the app or the lists never marks anything read).
+  useFocusEffect(
+    useCallback(() => {
+      setFocused(true);
+      setActiveSwap(id);
+      return () => {
+        setFocused(false);
+        setActiveSwap(null);
+      };
+    }, [id]),
+  );
+
+  const lastServerId = data?.messages[data.messages.length - 1]?.id;
+  const unreadOnServer = data?.swap?.unread_count || 0;
+  useEffect(() => {
+    if (!focused || !lastServerId) return;
+    if (reportedRead.current === lastServerId && !unreadOnServer) return;
+    reportedRead.current = lastServerId;
+    apiFetch(`/api/swaps/${id}/read`, { method: "POST", body: { message_id: lastServerId } })
+      .then(() => {
+        qc.invalidateQueries({ queryKey: ["notifications"] });
+        qc.invalidateQueries({ queryKey: ["notificationFeed"] });
+        qc.invalidateQueries({ queryKey: ["swaps"], refetchType: "none" });
+      })
+      .catch(() => {
+        reportedRead.current = null; // try again on the next poll
+      });
+  }, [focused, lastServerId, unreadOnServer, id, qc]);
 
   const act = async (fn: () => Promise<any>, hap: "light" | "success" = "light") => {
     try {
@@ -119,8 +168,13 @@ export default function SwapChat() {
       // The Swaps list shows the last message: mark it stale so it refreshes the next time it's shown,
       // without refetching it (and the notifications) after every single message.
       qc.invalidateQueries({ queryKey: ["swaps"], refetchType: "none" });
-    } catch {
+    } catch (e: any) {
       setOutbox((o) => o.map((m) => (m.client_id === item.client_id ? { ...m, status: "failed" } : m)));
+      if (e?.code === "chat_locked") {
+        // The chat state changed under us (e.g. the swap was declined): show the server's view.
+        toast(e.message, "error");
+        invalidateAll();
+      }
     }
   };
 
@@ -132,6 +186,7 @@ export default function SwapChat() {
     textRef.current = "";
     setText("");
     haptic("light");
+    nearEnd.current = true; // your own message always scrolls into view
     const item: OutboxItem = { client_id: newClientId(), text: body, status: "sending", created_at: new Date().toISOString() };
     setOutbox((o) => [...o, item]);
     deliver(item);
@@ -164,6 +219,23 @@ export default function SwapChat() {
     [],
   );
 
+  // Keep the latest message in view: after new content, and when the list gets shorter because the
+  // keyboard opened — but only if the reader was already at the bottom (never yank them away from
+  // older messages they scrolled up to read).
+  const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    nearEnd.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - NEAR_END_PX;
+  }, []);
+  const onListLayout = useCallback((e: LayoutChangeEvent) => {
+    const h = e.nativeEvent.layout.height;
+    const shrank = h < listHeight.current;
+    listHeight.current = h;
+    if (shrank && nearEnd.current) requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
+  }, []);
+  const onContentSizeChange = useCallback(() => {
+    if (nearEnd.current) listRef.current?.scrollToEnd({ animated: true });
+  }, []);
+
   if (isLoading || !data) {
     return (
       <View style={[styles.root, { justifyContent: "center" }]}>
@@ -174,11 +246,33 @@ export default function SwapChat() {
 
   const swap = data.swap;
   const other = swap.other_user;
+  const otherFirst = other.name?.split(" ")[0] || "";
   const status = swap.status;
   const proposal = swap.active_proposal;
   const iAmProposer = proposal && proposal.proposer_id === myId;
   const myRated = swap.is_requester ? swap.requester_rated : swap.receiver_rated;
   const iCompleted = swap.is_requester ? swap.requester_completed : swap.receiver_completed;
+  const panel = chatPanel(swap, myId);
+
+  const openProposeSheet = () => {
+    setGiveId(null);
+    setGetId(null);
+    proposeSheet.current?.expand();
+  };
+
+  const NoteCard = swap.note ? (
+    <View testID="proposal-note" style={styles.noteCard}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 }}>
+        <Quotes size={16} color={colors.brandPrimary} weight="fill" />
+        <AppText variant="label" color={colors.brandPrimary}>
+          {swap.is_requester ? t("swapChat.yourNote") : t("swapChat.noteFromName", { name: otherFirst })}
+        </AppText>
+      </View>
+      <AppText variant="body" color={colors.onSurfaceSecondary}>
+        {swap.note}
+      </AppText>
+    </View>
+  ) : null;
 
   const renderMessage = ({ item }: { item: any }) => {
     if (item.type === "system") {
@@ -223,7 +317,7 @@ export default function SwapChat() {
       return (
         <View style={[styles.bubbleRow, { justifyContent: mine ? "flex-end" : "flex-start" }]}>
           <View style={[styles.imageBubble, mine ? imageTailMine : imageTailTheirs]}>
-            <Image source={{ uri: resolveImage(item.image_url) }} style={styles.chatImage} contentFit="cover" transition={200} />
+            <Image source={{ uri: resolveImage(item.image_url) }} style={[styles.chatImage, { width: chatImageSize, height: chatImageSize }]} contentFit="cover" transition={200} />
             {item.text ? (
               <AppText variant="body" color={colors.onSurface} style={{ marginTop: 6 }}>
                 {item.text}
@@ -257,7 +351,10 @@ export default function SwapChat() {
     );
   };
 
-  const showInput = status !== "declined" && status !== "cancelled";
+  // The composer's bottom padding clears the home indicator / navigation bar while the keyboard is
+  // closed. When it opens that inset is under the keyboard, so the lift is reduced by the same amount
+  // (minus a small gap): the input then sits just above the keyboard with no hardcoded heights.
+  const composerBottom = Math.max(insets.bottom, 10);
 
   return (
     <View style={styles.root}>
@@ -270,8 +367,8 @@ export default function SwapChat() {
         </Pressable>
         <Pressable onPress={() => router.push(`/person/${other.user_id}`)} style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
           <Avatar uri={other.avatar_url} name={other.name} size={38} />
-          <View>
-            <AppText variant="heading">{other.name}</AppText>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <AppText variant="heading" numberOfLines={1}>{other.name}</AppText>
             <AppText variant="caption" color={colors.muted}>
               {STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status}
             </AppText>
@@ -279,22 +376,88 @@ export default function SwapChat() {
         </Pressable>
       </View>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior="translate-with-padding" keyboardVerticalOffset={0}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior="padding"
+        automaticOffset
+        keyboardVerticalOffset={-(composerBottom - KEYBOARD_GAP)}
+        enabled={panel.composer}
+      >
         <FlatList
           ref={listRef}
           data={listData}
           keyExtractor={(m) => m.id}
           renderItem={renderMessage}
-          contentContainerStyle={{ padding: 16, gap: 8, paddingBottom: 16 }}
-          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
+          ListHeaderComponent={NoteCard}
+          contentContainerStyle={{ padding: 16, gap: 8, paddingBottom: 16, flexGrow: 1 }}
+          onContentSizeChange={onContentSizeChange}
+          onLayout={onListLayout}
+          onScroll={onScroll}
+          scrollEventThrottle={64}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
           showsVerticalScrollIndicator={false}
         />
 
         {/* Action area */}
-        <View style={styles.actionArea}>
-          {status === "pending" && (
+        <View style={[styles.actionArea, !panel.composer && { paddingBottom: insets.bottom + 12 }]}>
+          {panel.waiting && (
+            <View testID="chat-locked-waiting" style={{ gap: 8 }}>
+              <View style={styles.lockRow}>
+                <LockSimple size={16} color={colors.muted} weight="bold" />
+                <AppText variant="caption" color={colors.muted} style={{ flex: 1 }}>
+                  {t("swapChat.chatLockedWaiting", { name: otherFirst })}
+                </AppText>
+              </View>
+              {panel.canPropose && (
+                <Button
+                  testID="propose-swap"
+                  title={proposal ? t("swapChat.changeProposal") : t("swapChat.proposeSwap")}
+                  variant="outline"
+                  onPress={openProposeSheet}
+                />
+              )}
+            </View>
+          )}
+
+          {panel.decide && (
+            <View testID="chat-locked-decide" style={{ gap: 10 }}>
+              <View style={{ gap: 2 }}>
+                <AppText variant="heading">{t("swapChat.decideTitle", { name: otherFirst })}</AppText>
+                <AppText variant="caption" color={colors.muted}>
+                  {t("swapChat.decideBody")}
+                </AppText>
+              </View>
+              <Pressable testID="view-requester-profile" onPress={() => router.push(`/person/${other.user_id}`)} style={styles.linkRow}>
+                <UserCircle size={18} color={colors.brandPrimary} />
+                <AppText variant="label" color={colors.brandPrimary}>
+                  {t("swapChat.viewProfile")}
+                </AppText>
+              </Pressable>
+              {panel.canAnswerProposal && (
+                <Button
+                  testID="accept-swap"
+                  title={t("swapChat.acceptSwap")}
+                  onPress={() => act(() => apiFetch(`/api/swaps/${id}/accept`, { method: "POST" }), "success")}
+                />
+              )}
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <Button testID="decline-swap" title={t("swapChat.decline")} variant="outline" style={{ flex: 1 }} onPress={() => act(() => apiFetch(`/api/swaps/${id}/decline`, { method: "POST" }))} />
+                <Button
+                  testID="accept-chat"
+                  title={t("swapChat.acceptToChat")}
+                  variant={panel.canAnswerProposal ? "outline" : "primary"}
+                  icon={<ChatCircleDots size={18} color={panel.canAnswerProposal ? colors.brandPrimary : colors.onBrandPrimary} weight="bold" />}
+                  style={{ flex: 1 }}
+                  onPress={() => act(() => apiFetch(`/api/swaps/${id}/allow-chat`, { method: "POST" }), "success")}
+                />
+              </View>
+            </View>
+          )}
+
+          {status === "pending" && panel.state === "open" && (
             <>
-              {proposal && !iAmProposer ? (
+              {panel.canAnswerProposal ? (
                 <View style={{ flexDirection: "row", gap: 10 }}>
                   <Button testID="decline-swap" title={t("swapChat.decline")} variant="outline" style={{ flex: 1 }} onPress={() => act(() => apiFetch(`/api/swaps/${id}/decline`, { method: "POST" }))} />
                   <Button testID="accept-swap" title={t("swapChat.accept")} style={{ flex: 1 }} onPress={() => act(() => apiFetch(`/api/swaps/${id}/accept`, { method: "POST" }), "success")} />
@@ -303,7 +466,7 @@ export default function SwapChat() {
                 <View style={{ gap: 8 }}>
                   {iAmProposer && (
                     <AppText variant="caption" color={colors.muted} style={{ textAlign: "center" }}>
-                      {t("swapChat.waitingFor", { name: other.name?.split(" ")[0] })}
+                      {t("swapChat.waitingFor", { name: otherFirst })}
                     </AppText>
                   )}
                   <Button
@@ -311,11 +474,7 @@ export default function SwapChat() {
                     title={proposal ? t("swapChat.changeProposal") : t("swapChat.proposeSwap")}
                     variant={proposal ? "outline" : "primary"}
                     icon={!proposal ? <ArrowsClockwise size={18} color={colors.onBrandPrimary} weight="bold" /> : undefined}
-                    onPress={() => {
-                      setGiveId(null);
-                      setGetId(null);
-                      proposeSheet.current?.expand();
-                    }}
+                    onPress={openProposeSheet}
                   />
                 </View>
               )}
@@ -326,7 +485,7 @@ export default function SwapChat() {
             <View style={{ gap: 8 }}>
               {iCompleted ? (
                 <AppText variant="caption" color={colors.muted} style={{ textAlign: "center" }}>
-                  {t("swapChat.youMarkedComplete", { name: other.name?.split(" ")[0] })}
+                  {t("swapChat.youMarkedComplete", { name: otherFirst })}
                 </AppText>
               ) : null}
               <Button
@@ -355,7 +514,7 @@ export default function SwapChat() {
             ) : (
               <Button
                 testID="rate-swap"
-                title={t("swapChat.rateName", { name: other.name?.split(" ")[0] })}
+                title={t("swapChat.rateName", { name: otherFirst })}
                 icon={<Star size={18} color={colors.onBrandPrimary} weight="fill" />}
                 onPress={() => rateSheet.current?.expand()}
               />
@@ -368,9 +527,9 @@ export default function SwapChat() {
             </AppText>
           )}
 
-          {showInput && (
-            <View style={[styles.inputRow, { paddingBottom: insets.bottom > 0 ? insets.bottom : 10 }]}>
-              <Pressable testID="attach-image" onPress={sendImage} style={styles.attachBtn}>
+          {panel.composer && (
+            <View style={[styles.inputRow, { paddingBottom: composerBottom }]}>
+              <Pressable testID="attach-image" onPress={sendImage} style={styles.attachBtn} accessibilityRole="button" accessibilityLabel={t("swapChat.sendPhoto")}>
                 <ImageSquare size={22} color={colors.brandPrimary} weight="regular" />
               </Pressable>
               <TextInput
@@ -381,8 +540,12 @@ export default function SwapChat() {
                 placeholderTextColor={colors.muted}
                 style={styles.input}
                 multiline
+                maxLength={4000}
+                onFocus={() => {
+                  nearEnd.current = true;
+                }}
               />
-              <Pressable testID="send-message" onPress={send} style={styles.sendBtn}>
+              <Pressable testID="send-message" onPress={send} style={styles.sendBtn} accessibilityRole="button" accessibilityLabel={t("swapChat.send")}>
                 <PaperPlaneRight size={20} color={colors.onBrandPrimary} weight="fill" />
               </Pressable>
             </View>
@@ -391,29 +554,13 @@ export default function SwapChat() {
       </KeyboardAvoidingView>
 
       {/* Propose sheet */}
-      <BottomSheet ref={proposeSheet} index={-1} snapPoints={[440]} enablePanDownToClose backdropComponent={backdrop} backgroundStyle={{ backgroundColor: colors.surfaceSecondary }} handleIndicatorStyle={{ backgroundColor: colors.borderStrong }}>
-        <BottomSheetView style={{ padding: 20, paddingBottom: insets.bottom + 20, gap: 14 }}>
+      <BottomSheet ref={proposeSheet} index={-1} snapPoints={["75%"]} enablePanDownToClose backdropComponent={backdrop} backgroundStyle={{ backgroundColor: colors.surfaceSecondary }} handleIndicatorStyle={{ backgroundColor: colors.borderStrong }}>
+        <BottomSheetScrollView contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20, gap: 14 }}>
           <AppText variant="title">{t("swapChat.proposeSwap")}</AppText>
           <AppText variant="label" color={colors.muted}>{t("swapChat.youGive")}</AppText>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
-            {data.my_books.length === 0 && <AppText variant="body" color={colors.muted}>{t("swapChat.addBooksFirst")}</AppText>}
-            {data.my_books.map((b: any) => (
-              <Pressable key={b.id} testID={`give-${b.id}`} onPress={() => setGiveId(b.id)} style={[styles.pick, giveId === b.id && styles.pickOn]}>
-                <BookCover uri={b.cover_url} width={56} />
-                <AppText variant="caption" numberOfLines={1} style={{ width: 56 }}>{b.title}</AppText>
-              </Pressable>
-            ))}
-          </ScrollView>
+          <BookPicker books={data.my_books} selectedId={giveId} onChange={setGiveId} testIDPrefix="give" emptyText={t("swapChat.addBooksFirst")} coverWidth={56} />
           <AppText variant="label" color={colors.muted}>{t("swapChat.youReceive")}</AppText>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
-            {data.their_books.length === 0 && <AppText variant="body" color={colors.muted}>{t("swapChat.theyHaveNoBooks")}</AppText>}
-            {data.their_books.map((b: any) => (
-              <Pressable key={b.id} testID={`get-${b.id}`} onPress={() => setGetId(b.id)} style={[styles.pick, getId === b.id && styles.pickOn]}>
-                <BookCover uri={b.cover_url} width={56} />
-                <AppText variant="caption" numberOfLines={1} style={{ width: 56 }}>{b.title}</AppText>
-              </Pressable>
-            ))}
-          </ScrollView>
+          <BookPicker books={data.their_books} selectedId={getId} onChange={setGetId} testIDPrefix="get" emptyText={t("swapChat.theyHaveNoBooks")} coverWidth={56} />
           <Button
             testID="send-proposal"
             title={t("swapChat.sendProposal")}
@@ -425,12 +572,12 @@ export default function SwapChat() {
               }, "success")
             }
           />
-        </BottomSheetView>
+        </BottomSheetScrollView>
       </BottomSheet>
 
       {/* Rate sheet */}
-      <BottomSheet ref={rateSheet} index={-1} snapPoints={[380]} enablePanDownToClose backdropComponent={backdrop} backgroundStyle={{ backgroundColor: colors.surfaceSecondary }} handleIndicatorStyle={{ backgroundColor: colors.borderStrong }}>
-        <BottomSheetView style={{ padding: 20, paddingBottom: insets.bottom + 20, gap: 16 }}>
+      <BottomSheet ref={rateSheet} index={-1} snapPoints={["70%"]} keyboardBehavior="interactive" keyboardBlurBehavior="restore" android_keyboardInputMode="adjustResize" enablePanDownToClose backdropComponent={backdrop} backgroundStyle={{ backgroundColor: colors.surfaceSecondary }} handleIndicatorStyle={{ backgroundColor: colors.borderStrong }}>
+        <BottomSheetScrollView contentContainerStyle={{ padding: 20, paddingBottom: insets.bottom + 20, gap: 16 }} keyboardShouldPersistTaps="handled">
           <AppText variant="title">{t("swapChat.rateYourSwap")}</AppText>
           <View style={{ flexDirection: "row", justifyContent: "center", gap: 8 }}>
             {[1, 2, 3, 4, 5].map((n) => (
@@ -439,7 +586,7 @@ export default function SwapChat() {
               </Pressable>
             ))}
           </View>
-          <TextInput
+          <BottomSheetTextInput
             testID="review-input"
             value={review}
             onChangeText={setReview}
@@ -447,19 +594,41 @@ export default function SwapChat() {
             placeholderTextColor={colors.muted}
             style={styles.reviewInput}
             multiline
+            maxLength={REVIEW_MAX_CHARS}
           />
+          {/* Off by default: a review shows who wrote it unless the reviewer deliberately hides it. */}
+          <Pressable
+            testID="review-anonymous-toggle"
+            accessibilityRole="switch"
+            accessibilityState={{ checked: anonymous }}
+            onPress={() => {
+              haptic("selection");
+              setAnonymous((v) => !v);
+            }}
+            style={styles.anonRow}
+          >
+            <View style={{ flex: 1, gap: 2 }}>
+              <AppText variant="label">{t("reviews.postAnonymously")}</AppText>
+              <AppText variant="caption" color={colors.muted}>
+                {anonymous ? t("reviews.anonymousOnHint") : t("reviews.anonymousOffHint")}
+              </AppText>
+            </View>
+            <View style={[styles.switch, anonymous && styles.switchOn]}>
+              <View style={[styles.knob, anonymous && styles.knobOn]} />
+            </View>
+          </Pressable>
           <Button
             testID="submit-rating"
             title={t("swapChat.submitRating")}
             onPress={() =>
               act(async () => {
-                await apiFetch(`/api/swaps/${id}/rate`, { method: "POST", body: { stars, review } });
+                await apiFetch(`/api/swaps/${id}/rate`, { method: "POST", body: rateBody(stars, review, anonymous) });
                 rateSheet.current?.close();
                 toast(t("swapChat.thanksForRating"), "success");
               }, "success")
             }
           />
-        </BottomSheetView>
+        </BottomSheetScrollView>
       </BottomSheet>
     </View>
   );
@@ -476,6 +645,10 @@ const useStyles = makeStyles((colors) => ({
   bubbleTheirs: { backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderBottomLeftRadius: 4 },
   bubbleFailed: { opacity: 0.8, borderWidth: 1, borderColor: colors.error },
   proposalCard: { alignSelf: "center", backgroundColor: colors.surfaceSecondary, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.brandTertiary, marginVertical: 4 },
+  // The proposal note: part of the proposal (a card at the top), deliberately unlike a chat bubble.
+  noteCard: { backgroundColor: colors.brandTertiary, borderRadius: 16, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: colors.border },
+  lockRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 },
+  linkRow: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", paddingVertical: 2 },
   actionArea: { paddingHorizontal: 16, paddingTop: 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, gap: 8 },
   doneRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 6 },
   inputRow: { flexDirection: "row", alignItems: "flex-end", gap: 8, paddingTop: 4 },
@@ -484,7 +657,10 @@ const useStyles = makeStyles((colors) => ({
   chatImage: { width: 200, height: 200, borderRadius: 14, backgroundColor: colors.surfaceTertiary },
   input: { flex: 1, backgroundColor: colors.surfaceTertiary, borderRadius: 20, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 10, maxHeight: 100, color: colors.onSurface, fontFamily: "DMSans-Regular", fontSize: 15 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.brandPrimary, alignItems: "center", justifyContent: "center" },
-  pick: { alignItems: "center", gap: 4, padding: 6, borderRadius: 12, borderWidth: 2, borderColor: "transparent" },
-  pickOn: { borderColor: colors.brandPrimary, backgroundColor: colors.brandTertiary },
+  anonRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 4 },
+  switch: { width: 50, height: 30, borderRadius: 15, backgroundColor: colors.surfaceTertiary, padding: 3, justifyContent: "center" },
+  switchOn: { backgroundColor: colors.brandSecondary },
+  knob: { width: 24, height: 24, borderRadius: 12, backgroundColor: "#FFFFFF" },
+  knobOn: { alignSelf: "flex-end" },
   reviewInput: { backgroundColor: colors.surfaceTertiary, borderRadius: 12, padding: 14, minHeight: 70, color: colors.onSurface, fontFamily: "DMSans-Regular", fontSize: 15 },
 }));

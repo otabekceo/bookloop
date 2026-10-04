@@ -187,7 +187,10 @@ export function Button({
           borderWidth: variant === "secondary" || variant === "outline" ? 1 : 0,
           borderColor,
           borderRadius: 16,
-          height: 52,
+          // A minimum, not a fixed height: a long translation in a half-width button (e.g. Russian
+          // on a 320 dp phone) wraps to a second line instead of being clipped.
+          minHeight: 52,
+          paddingVertical: 8,
           alignItems: "center",
           justifyContent: "center",
           flexDirection: "row",
@@ -210,7 +213,7 @@ export function Button({
       ) : (
         <>
           {icon}
-          <AppText variant="button" color={fg}>
+          <AppText variant="button" color={fg} numberOfLines={2} style={{ flexShrink: 1, textAlign: "center" }}>
             {title}
           </AppText>
         </>

@@ -132,7 +132,7 @@ export default function EditProfile() {
                 title={t("location.update")}
                 loading={location.state === "locating"}
                 onPress={location.request}
-                style={{ height: 42, paddingHorizontal: 14, flexShrink: 0 }}
+                style={{ height: 42, minHeight: 42, paddingHorizontal: 14, flexShrink: 0 }}
               />
             </View>
           ) : (

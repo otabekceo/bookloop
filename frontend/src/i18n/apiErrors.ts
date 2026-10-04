@@ -41,7 +41,30 @@ const EXACT: Record<string, string> = {
   "Image too large (max 8 MB)": "apiErrors.imageTooLarge",
   "Could not store the image": "apiErrors.imageStoreFailed",
   "Invalid or expired file link": "apiErrors.invalidFileLink",
+  "Choose both books, or neither": "apiErrors.chooseBothBooks",
+  "Invalid push token": "apiErrors.invalidPushToken",
 };
+
+/** Machine `code`s of the swap/chat/favorites endpoints (v2.2). Registration/OTP codes are not here:
+ * their screens translate those themselves. */
+const CODES: Record<string, string> = {
+  chat_locked: "apiErrors.chatLocked",
+  not_exchanging: "apiErrors.notExchanging",
+  note_too_long: "apiErrors.noteTooLong",
+  rate_limited: "apiErrors.tooManyRequests",
+  recently_declined: "apiErrors.recentlyDeclined",
+  proposal_limit: "apiErrors.proposalLimit",
+  only_recipient: "apiErrors.onlyRecipient",
+  cannot_favorite_self: "apiErrors.cannotFavoriteSelf",
+};
+
+/** Translated text for a coded error this map knows, otherwise undefined. */
+export function localizeApiErrorCode(code: string | undefined, path: string): string | undefined {
+  if (!code || !CODES[code]) return undefined;
+  // "rate_limited" is also a registration/OTP code, which those screens translate themselves.
+  if (code === "rate_limited" && !path.startsWith("/api/swaps")) return undefined;
+  return i18n.t(CODES[code]);
+}
 
 const SWAP_STATUS_KEYS: Record<string, string> = {
   pending: "swaps.statusPending",

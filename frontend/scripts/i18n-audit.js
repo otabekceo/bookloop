@@ -41,10 +41,28 @@ const report = (title, lines) => {
   if (lines.length > 200) console.log(`  … ${lines.length - 200} more`);
 };
 
-// 1. Missing keys
-const allKeys = new Set(LANGS.flatMap((l) => Object.keys(locales[l])));
+// 1. Missing keys. Plural keys use each language's own CLDR categories (i18next compatibilityJSON v4):
+// en/it/uz key_one/_other, ru adds _few/_many, ar adds _zero/_two. A plural key is compared by its base,
+// and each language must define every category its plural rules produce.
+const PLURAL_RE = /_(zero|one|two|few|many|other)$/;
+const PLURAL_FORMS = {
+  en: ["one", "other"], it: ["one", "other"], uz: ["one", "other"],
+  ru: ["one", "few", "many", "other"], ar: ["zero", "one", "two", "few", "many", "other"],
+};
+const baseKey = (k) => k.replace(PLURAL_RE, "");
+const pluralBases = new Set(LANGS.flatMap((l) => Object.keys(locales[l]).filter((k) => PLURAL_RE.test(k)).map(baseKey)));
+const allKeys = new Set(LANGS.flatMap((l) => Object.keys(locales[l]).map((k) => (PLURAL_RE.test(k) ? baseKey(k) : k))));
 const missing = [];
-for (const l of LANGS) for (const k of allKeys) if (!(k in locales[l])) missing.push(`${l}: ${k}`);
+for (const l of LANGS) {
+  for (const k of allKeys) {
+    if (pluralBases.has(k)) {
+      for (const f of PLURAL_FORMS[l]) if (!(`${k}_${f}` in locales[l])) missing.push(`${l}: ${k}_${f}`);
+    } else if (!(k in locales[l])) missing.push(`${l}: ${k}`);
+  }
+  for (const k of Object.keys(locales[l])) {
+    if (k.endsWith("_plural")) missing.push(`${l}: ${k} (i18next v4 ignores "_plural" — use CLDR forms)`);
+  }
+}
 report("Missing translation keys", missing);
 problems += missing.length;
 

@@ -13,6 +13,7 @@ Never run a backend with this flag reachable from the internet — see backend/.
 """
 import os
 import io
+import re
 import time
 import uuid
 from pathlib import Path
@@ -257,6 +258,7 @@ class TestSwapFlow:
         assert r.status_code == 200
         s = r.json()["swap"]
         assert s["status"] == "pending"
+        assert s["note"] == "Hi!"  # an older client's first message is kept as the proposal note
         TestSwapFlow.state["swap_id"] = s["id"]
 
     def test_create_swap_self_forbidden(self, user_a):
@@ -279,9 +281,13 @@ class TestSwapFlow:
         assert isinstance(d["messages"], list) and len(d["messages"]) >= 1
         assert isinstance(d["my_books"], list) and isinstance(d["their_books"], list)
 
-    def test_send_message(self, user_a):
+    def test_send_message_locked_until_accepted(self, user_a, user_b):
         sid = TestSwapFlow.state["swap_id"]
         r = requests.post(f"{API}/swaps/{sid}/messages", json={"text": "Ciao!"}, headers=_h(user_a["token"]))
+        if r.status_code == 403:  # a fresh pair: chat is locked until the recipient accepts
+            assert r.json()["detail"]["code"] == "chat_locked"
+            assert requests.post(f"{API}/swaps/{sid}/allow-chat", headers=_h(user_b["token"])).status_code == 200
+            r = requests.post(f"{API}/swaps/{sid}/messages", json={"text": "Ciao!"}, headers=_h(user_a["token"]))
         assert r.status_code == 200
         assert r.json()["message"]["text"] == "Ciao!"
 
@@ -379,6 +385,8 @@ class TestChatImage:
                           headers=_h(user_a["token"]))
         assert r.status_code == 200
         TestChatImage.state["sid"] = r.json()["swap"]["id"]
+        # The recipient opens the chat (a no-op if these two already met in TestSwapFlow).
+        requests.post(f"{API}/swaps/{TestChatImage.state['sid']}/allow-chat", headers=_h(user_b["token"]))
 
     def test_empty_message_rejected(self, user_a):
         sid = TestChatImage.state["sid"]
@@ -801,11 +809,14 @@ class TestSwapGuards:
         assert r.status_code == 401
 
     # ---- messages
-    def test_messages_allowed_pending_and_active(self, world):
+    def test_messages_locked_while_pending_then_allowed_when_active(self, world):
         w = world
-        assert _swap(w["a"], "/messages", w["sid"], {"text": "pending hi"}).status_code == 200
+        for u in (w["a"], w["b"]):
+            r = _swap(u, "/messages", w["sid"], {"text": "pending hi"})
+            assert r.status_code == 403 and r.json()["detail"]["code"] == "chat_locked"
         _to_active(w)
         assert _swap(w["b"], "/messages", w["sid"], {"text": "active hi"}).status_code == 200
+        assert _swap(w["a"], "/messages", w["sid"], {"text": "active hi back"}).status_code == 200
 
     def test_messages_blocked_when_declined(self, world):
         w = world
@@ -821,6 +832,7 @@ class TestSwapGuards:
         assert _swap(w["b"], "/messages", w["sid"], {"text": "hello?"}).status_code == 409
 
     def test_empty_message_still_400_when_allowed(self, world):
+        _to_active(world)
         assert _swap(world["a"], "/messages", world["sid"], {"text": "   "}).status_code == 400
 
 
@@ -960,6 +972,8 @@ class TestMessageKeys:
     def test_last_message_key_in_swap_list(self, world):
         w = world
         assert _swap_row(w["a"], w["sid"])["last_message_key"] == "swapChat.sys.interested"
+        assert _swap(w["b"], "/allow-chat", w["sid"]).status_code == 200
+        assert _swap_row(w["a"], w["sid"])["last_message_key"] == "swapChat.sys.chatAccepted"
         assert _swap(w["a"], "/messages", w["sid"], {"text": "hello"}).status_code == 200
         row = _swap_row(w["a"], w["sid"])
         assert row["last_message"] == "hello" and row["last_message_key"] is None  # user text is never a key
@@ -969,6 +983,7 @@ class TestMessageKeys:
 
     def test_user_text_message_has_no_key(self, world):
         w = world
+        assert _swap(w["b"], "/allow-chat", w["sid"]).status_code == 200
         r = _swap(w["a"], "/messages", w["sid"], {"text": "ciao"}).json()["message"]
         assert r["key"] is None and r["text"] == "ciao"
 
@@ -979,7 +994,7 @@ class TestMessageKeys:
         if not d.exists():
             pytest.skip("frontend locales not found")
         sys_keys = ["interested", "proposed", "confirmed", "declined", "cancelled", "markedComplete",
-                    "completed", "badgeUnlocked", "photo"]
+                    "completed", "badgeUnlocked", "photo", "chatAccepted"]
         badge_ids = ["first_loop", "regular", "bookworm", "legend"]
 
         def leaves(o, p=""):
@@ -998,7 +1013,9 @@ class TestMessageKeys:
                 assert loc["badges"]["names"][b].strip(), (lang, b)
             # shown in the NEW language while switching between LTR and RTL
             assert loc["languageSelect"]["switching"].strip(), (lang, "languageSelect.switching")
-            sets[lang] = set(leaves(loc))
+            # Plural keys carry each language's own CLDR categories (ru adds _few/_many, ar _zero/_two...),
+            # so they are compared by base key (frontend/scripts/i18n-audit.js checks the categories).
+            sets[lang] = {re.sub(r"_(zero|one|two|few|many|other)$", "", k) for k in leaves(loc)}
         assert all(s == sets["en"] for s in sets.values()), {
             l: sorted(sets["en"] ^ s)[:5] for l, s in sets.items() if s != sets["en"]}
 
@@ -1300,7 +1317,9 @@ def fake_google():
             else:
                 kind, _, rest = code.partition(":")
                 email, _, name = rest.partition(":")
+                # `sub` is Google's stable account id; "nosub" imitates a token without one.
                 claims = {"iss": "https://accounts.google.com", "aud": TEST_CLIENT_ID, "email": email,
+                          "sub": None if kind == "nosub" else ("gsub-" + email.lower()),
                           "email_verified": True, "name": name or "Google User",
                           "picture": "https://example.com/p.png", "exp": int(time.time()) + 3600}
                 if kind == "badaud":
@@ -1354,7 +1373,7 @@ def _google_login(email, prefix="ok", name="Gina Google"):
 
 class TestGoogleLogin:
     def test_providers_reports_google_enabled(self, fake_google):
-        assert requests.get(f"{API}/auth/providers").json() == {"google": True}
+        assert requests.get(f"{API}/auth/providers").json()["google"] is True
 
     def test_start_redirects_to_google_with_our_client(self, fake_google):
         loc, q = _google_start()
@@ -1446,6 +1465,78 @@ class TestGoogleLogin:
         loc = _google_callback("ok:qq@example.com:Q", q["state"]).headers["location"]
         assert loc.startswith("exp://192.168.1.5:8081/--/?a=1&session_id=")
         assert parse_qs(urlparse(loc).query)["session_id"]
+
+
+def _google_link(user_token, code):
+    """Settings -> Link Google for a signed-in user; returns the final app redirect."""
+    from urllib.parse import urlparse, parse_qs
+    r = requests.post(f"{API}/auth/google/link", json={"redirect": APP_REDIRECT}, headers=_h(user_token))
+    assert r.status_code == 200, r.text
+    state = parse_qs(urlparse(r.json()["url"]).query)["state"][0]
+    cb = _google_callback(code, state)
+    assert cb.status_code == 302
+    return cb.headers["location"]
+
+
+class TestGoogleIdentities:
+    def test_login_records_identity(self, fake_google):
+        email = f"gi_{uuid.uuid4().hex[:8]}@example.com"
+        sid, _l = _google_login(email)
+        uid = requests.post(f"{API}/auth/session", json={"session_id": sid}).json()["user"]["user_id"]
+        from pymongo import MongoClient
+        db = MongoClient(os.environ.get("MONGO_URL") or "mongodb://localhost:27017")[os.environ.get("DB_NAME") or "bookloop_test"]
+        ident = db.auth_identities.find_one({"provider": "google", "subject": "gsub-" + email})
+        assert ident and ident["user_id"] == uid
+
+    def test_identity_wins_over_email(self, fake_google):
+        # Google account X is linked to account A; A's Google login keeps opening A even though
+        # another account B has the Google email.
+        a = requests.post(f"{API}/auth/register/dev-instant", json={"email": f"ga_{uuid.uuid4().hex[:8]}@example.com", "password": "test1234", "name": "A"}).json()
+        b_email = f"gb_{uuid.uuid4().hex[:8]}@example.com"
+        b = requests.post(f"{API}/auth/register/dev-instant", json={"email": b_email, "password": "test1234", "name": "B"}).json()
+        loc = _google_link(a["session_token"], f"ok:{b_email}:Gee")
+        assert "linked=google" in loc
+        sid, _l = _google_login(b_email)
+        got = requests.post(f"{API}/auth/session", json={"session_id": sid}).json()["user"]["user_id"]
+        assert got == a["user"]["user_id"] != b["user"]["user_id"]
+
+    def test_link_google_to_signed_in_account(self, fake_google):
+        a = requests.post(f"{API}/auth/register/dev-instant", json={"email": f"gl_{uuid.uuid4().hex[:8]}@example.com", "password": "test1234", "name": "L"}).json()
+        g_email = f"glg_{uuid.uuid4().hex[:8]}@gmail.com"
+        assert "linked=google" in _google_link(a["session_token"], f"ok:{g_email}:L")
+        d = requests.get(f"{API}/auth/identities", headers=_h(a["session_token"])).json()
+        assert d["providers"]["google"] == {"linked": True, "email": g_email, "private_email": False}
+        sid, _l = _google_login(g_email)
+        assert requests.post(f"{API}/auth/session", json={"session_id": sid}).json()["user"]["user_id"] == a["user"]["user_id"]
+        # linking never signs anyone in: no session id in the link redirect
+        assert "session_id" not in _google_link(a["session_token"], f"ok:{g_email}:L")
+
+    def test_google_identity_of_another_account_cannot_be_linked(self, fake_google):
+        g_email = f"gt_{uuid.uuid4().hex[:8]}@example.com"
+        sid, _l = _google_login(g_email)
+        owner = requests.post(f"{API}/auth/session", json={"session_id": sid}).json()
+        attacker = requests.post(f"{API}/auth/register/dev-instant", json={"email": f"gx_{uuid.uuid4().hex[:8]}@example.com", "password": "test1234", "name": "X"}).json()
+        loc = _google_link(attacker["session_token"], f"ok:{g_email}:T")
+        assert "link_error=identity_in_use" in loc and "session_id" not in loc
+        sid2, _l = _google_login(g_email)
+        assert requests.post(f"{API}/auth/session", json={"session_id": sid2}).json()["user"]["user_id"] == owner["user"]["user_id"]
+
+    def test_link_requires_auth_and_allowed_redirect(self, fake_google):
+        assert requests.post(f"{API}/auth/google/link", json={"redirect": APP_REDIRECT}).status_code == 401
+        u = requests.post(f"{API}/auth/register/dev-instant", json={"email": f"gr_{uuid.uuid4().hex[:8]}@example.com", "password": "test1234", "name": "R"}).json()
+        r = requests.post(f"{API}/auth/google/link", json={"redirect": "https://evil.example/"}, headers=_h(u["session_token"]))
+        assert r.status_code == 400
+
+    def test_google_only_account_cannot_unlink_last_method(self, fake_google):
+        sid, _l = _google_login(f"go_{uuid.uuid4().hex[:8]}@example.com")
+        tok = requests.post(f"{API}/auth/session", json={"session_id": sid}).json()["session_token"]
+        r = requests.delete(f"{API}/auth/identities/google", headers=_h(tok))
+        assert r.status_code == 409 and r.json()["detail"]["code"] == "last_login_method"
+
+    def test_token_without_sub_still_signs_in_by_email(self, fake_google):
+        email = f"gn_{uuid.uuid4().hex[:8]}@example.com"
+        sid, _l = _google_login(email, prefix="nosub")
+        assert sid and requests.post(f"{API}/auth/session", json={"session_id": sid}).status_code == 200
 
 
 class TestSearchAndUpload:
@@ -1695,6 +1786,13 @@ def _proposed_swap():
     return a, b, sid, ba, bb
 
 
+def _chatting_swap():
+    """A pending swap whose recipient tapped "Accept to continue chatting"."""
+    a, b, sid, ba, bb = _proposed_swap()
+    assert _swap(b, "/allow-chat", sid).status_code == 200
+    return a, b, sid, ba, bb
+
+
 class TestSwapLifecycleBuckets:
     def test_pending_active_completed_each_in_exactly_one_bucket(self):
         a, b, sid, _, _ = _proposed_swap()
@@ -1755,7 +1853,7 @@ class TestProposalBooksInChat:
 # ------------------------------------------------------------------ MESSAGING: IDEMPOTENT + INCREMENTAL
 class TestMessaging:
     def test_client_id_makes_resend_idempotent(self):
-        a, b, sid, _, _ = _proposed_swap()
+        a, b, sid, _, _ = _chatting_swap()
         body = {"text": "hello once", "client_id": "c_test_" + uuid.uuid4().hex[:8]}
         first = _swap(a, "/messages", sid, body).json()["message"]
         again = _swap(a, "/messages", sid, body).json()
@@ -1764,14 +1862,14 @@ class TestMessaging:
         assert sum(1 for m in msgs if m.get("text") == "hello once") == 1
 
     def test_same_client_id_from_another_user_is_a_different_message(self):
-        a, b, sid, _, _ = _proposed_swap()
+        a, b, sid, _, _ = _chatting_swap()
         cid = "c_shared_" + uuid.uuid4().hex[:8]
         m1 = _swap(a, "/messages", sid, {"text": "from a", "client_id": cid}).json()["message"]
         m2 = _swap(b, "/messages", sid, {"text": "from b", "client_id": cid}).json()["message"]
         assert m1["id"] != m2["id"]
 
     def test_incremental_poll_returns_only_newer_messages_in_order(self):
-        a, b, sid, _, _ = _proposed_swap()
+        a, b, sid, _, _ = _chatting_swap()
         full = requests.get(f"{API}/swaps/{sid}", headers=_h(b["token"])).json()
         assert full["full"] is True and "my_books" in full
         anchor = full["messages"][-1]["id"]

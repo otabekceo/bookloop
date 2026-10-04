@@ -11,3 +11,4 @@ pymongo==4.6.3
 bcrypt==5.0.0                 # 5.x rejects passwords over 72 bytes; server.py validates this
 python-dotenv==1.2.3
 httpx==0.28.1                 # Google token exchange + Open Library search
+PyJWT[crypto]==2.10.1         # Sign in with Apple: identity-token signature check (optional: Apple stays off without it)

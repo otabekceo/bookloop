@@ -75,3 +75,122 @@ test("scan hand-off is delivered exactly once", () => {
   assert.deepEqual(takeScanResult(), { isbn: "9780000000000" });
   assert.equal(takeScanResult(), null);
 });
+
+// ---------------------------------------------------------------- v2.2
+import { chatPanel, chatStateOf, decideSwapStart, feedText, feedRoute, hasUnread, noteCharsLeft, NOTE_MAX_CHARS, pushUiState, togglePick } from "../src/swapFlow.ts";
+import { reviewerView, rateBody } from "../src/reviews.ts";
+import { parseLinkResult, canUnlink, loginMethodCount, linkErrorKey } from "../src/accountLinking.ts";
+
+test("chat panel: locked states never show the composer; open chat does", () => {
+  const waiting = chatPanel({ status: "pending", is_requester: true, chat: { state: "locked_waiting" } }, "me");
+  assert.equal(waiting.composer, false);
+  assert.equal(waiting.waiting, true);
+  assert.equal(waiting.canPropose, true);
+  const deciding = chatPanel({ status: "pending", chat: { state: "locked_needs_you" }, active_proposal: { proposer_id: "them" } }, "me");
+  assert.equal(deciding.composer, false);
+  assert.equal(deciding.decide, true);
+  assert.equal(deciding.canAnswerProposal, true);
+  assert.equal(deciding.canPropose, false);
+  // A completed swap keeps its conversation.
+  assert.equal(chatPanel({ status: "completed", chat: { state: "open" } }, "me").composer, true);
+  assert.equal(chatPanel({ status: "declined", chat: { state: "closed" } }, "me").composer, false);
+  // My own proposal is never mine to accept.
+  assert.equal(chatPanel({ status: "pending", chat: { state: "open" }, active_proposal: { proposer_id: "me" } }, "me").canAnswerProposal, false);
+});
+
+test("chat state: older servers without `chat` fall back to the status rule", () => {
+  assert.equal(chatStateOf({ status: "completed" }), "open");
+  assert.equal(chatStateOf({ status: "cancelled" }), "closed");
+  assert.equal(chatStateOf({ status: "pending", chat: { state: "bogus" } }), "open");
+});
+
+test("request swap: open swap first, not-exchanging blocks strangers, previous partners keep chatting", () => {
+  assert.deepEqual(decideSwapStart({ open: { id: "s1", status: "pending" }, latest: null, can_propose: false }), { kind: "open", swapId: "s1" });
+  assert.deepEqual(decideSwapStart({ open: null, latest: null, can_propose: false }), { kind: "notExchanging" });
+  assert.deepEqual(decideSwapStart({ open: null, latest: { id: "old", status: "completed" }, can_propose: false, latest_chat_open: true }), { kind: "openPreviousOnly", swapId: "old" });
+  assert.deepEqual(decideSwapStart({ open: null, latest: { id: "d", status: "declined" }, can_propose: false, latest_chat_open: false }), { kind: "notExchanging" });
+  assert.equal(decideSwapStart({ open: null, latest: { id: "old", status: "completed" }, can_propose: true }).kind, "askPrevious");
+  assert.deepEqual(decideSwapStart({ open: null, latest: null }), { kind: "compose" }); // older server: no can_propose
+});
+
+test("notification feed: every type has text in all languages; taps go to the conversation", () => {
+  const types = ["message", "proposal_received", "proposal_accepted", "proposal_declined", "proposal_cancelled", "chat_accepted", "some_future_type"];
+  for (const l of ["en", "uz", "ru", "it", "ar"]) {
+    const dict = locale(l);
+    for (const type of types) {
+      const item = { id: "x", kind: type === "message" ? "message" : "event", type, swap_id: "s", actor: { user_id: "u", name: "Sara" }, read: false, unread_count: 3 };
+      const { key, params } = feedText(item);
+      const parts = key.split(".");
+      const parent = parts.slice(0, -1).reduce((o, k) => o?.[k], dict);
+      const leaf = parts[parts.length - 1];
+      assert.ok(typeof (parent?.[leaf] ?? parent?.[`${leaf}_other`]) === "string", `${l}: ${key}`);
+      assert.equal(params.name, "Sara");
+    }
+  }
+  assert.equal(feedRoute({ swap_id: "swap_1" }), "/swap/swap_1");
+  assert.equal(hasUnread({ unread_total: 0 }), false);
+  assert.equal(hasUnread({ unread_total: 2 }), true);
+  assert.equal(hasUnread(undefined), false);
+});
+
+test("proposal note counter matches the server (trimmed length, 280 max)", () => {
+  assert.equal(NOTE_MAX_CHARS, 280);
+  assert.equal(noteCharsLeft("  hi  "), 278);
+  assert.ok(noteCharsLeft("x".repeat(281)) < 0);
+});
+
+test("notification toggle: ON only with server opt-in AND OS permission", () => {
+  assert.equal(pushUiState({ enabledOnServer: true, permission: "granted", pushReady: true }), "on");
+  assert.equal(pushUiState({ enabledOnServer: true, permission: "granted", pushReady: false }), "onNoPush");
+  assert.equal(pushUiState({ enabledOnServer: true, permission: "denied", pushReady: false }), "denied");
+  assert.equal(pushUiState({ enabledOnServer: false, permission: "granted", pushReady: true }), "off");
+  assert.equal(pushUiState({ enabledOnServer: true, permission: "unsupported", pushReady: false }), "unsupported");
+});
+
+test("book picker (Z): any of 20+ books, including ones far past the first screen, can be picked and cleared", () => {
+  const books = Array.from({ length: 22 }, (_, i) => `book_${i}`);
+  let sel = null;
+  sel = togglePick(sel, books[21]); // the last one, well beyond the ~5 covers visible at once
+  assert.equal(sel, "book_21");
+  sel = togglePick(sel, books[7]);
+  assert.equal(sel, "book_7"); // switching keeps exactly one selection
+  sel = togglePick(sel, books[7]);
+  assert.equal(sel, null); // tapping the selected book clears it
+  // The picker renders every book it gets (no first-page slicing) and scrolls inside bottom sheets.
+  const src = readFileSync(new URL("../src/components/BookPicker.tsx", import.meta.url), "utf8");
+  assert.match(src, /books\.map\(/);
+  assert.doesNotMatch(src, /books\.slice\(/);
+  assert.match(src, /from "react-native-gesture-handler"/);
+});
+
+test("reviews: anonymous shows nothing about the reviewer; default submission is identified", () => {
+  assert.deepEqual(reviewerView({ id: "r", stars: 5, is_anonymous: true, rater_id: null, rater_name: "BookLoop member" }), { anonymous: true, name: null, avatar: null, profileId: null });
+  assert.deepEqual(reviewerView({ id: "r", stars: 4, is_anonymous: false, rater_id: "u1", rater_name: "Sarah", rater_avatar: "a.png" }), { anonymous: false, name: "Sarah", avatar: "a.png", profileId: "u1" });
+  // Legacy review (no flag) = identified, as it always was.
+  assert.equal(reviewerView({ id: "r", stars: 4, rater_id: "u1", rater_name: "Old" }).anonymous, false);
+  assert.deepEqual(rateBody(5, "  Great  "), { stars: 5, review: "Great", is_anonymous: false });
+  assert.equal(rateBody(5, "", true).is_anonymous, true);
+  assert.equal(rateBody(9, "").stars, 5);
+  for (const l of ["en", "uz", "ru", "it", "ar"]) assert.ok(locale(l).reviews.bookLoopMember, l);
+});
+
+test("account linking: result parsing, and the last sign-in method is never unlinkable", () => {
+  assert.deepEqual(parseLinkResult("bookloop://settings/account?linked=google"), { kind: "linked" });
+  assert.deepEqual(parseLinkResult("bookloop://settings/account?link_error=identity_in_use"), { kind: "error", code: "identity_in_use" });
+  assert.deepEqual(parseLinkResult("bookloop://settings/account"), { kind: "cancelled" });
+  const googleOnly = { password: false, providers: { google: { linked: true }, apple: { linked: false } } };
+  assert.equal(loginMethodCount(googleOnly), 1);
+  assert.equal(canUnlink(googleOnly, "google"), false);
+  assert.equal(canUnlink({ ...googleOnly, password: true }, "google"), true);
+  assert.equal(canUnlink(googleOnly, "apple"), false); // not linked
+  assert.equal(linkErrorKey("last_login_method"), "account.errorLastMethod");
+  assert.equal(linkErrorKey("weird"), "account.linkFailed");
+});
+
+test("plurals use CLDR forms (i18next v4 ignores _plural)", () => {
+  for (const l of ["en", "uz", "ru", "it", "ar"]) {
+    const txt = readFileSync(new URL(`../src/i18n/locales/${l}.json`, import.meta.url), "utf8");
+    assert.doesNotMatch(txt, /_plural"/, l);
+  }
+  assert.ok(locale("ru").common.reviewCount_few.includes("отзыва"));
+});

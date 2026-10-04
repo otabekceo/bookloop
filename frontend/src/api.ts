@@ -1,7 +1,7 @@
 import { Platform } from "react-native";
 
 import { storage } from "@/src/utils/storage";
-import { localizeApiError } from "@/src/i18n/apiErrors";
+import { localizeApiError, localizeApiErrorCode } from "@/src/i18n/apiErrors";
 
 const BASE = ((process.env.EXPO_PUBLIC_BACKEND_URL as string | undefined) || "").replace(/\/+$/, "");
 export const API_BASE = BASE;
@@ -107,9 +107,15 @@ export async function apiFetch<T = any>(path: string, opts: Options = {}): Promi
     } catch {
       // ignore
     }
-    // Coded errors keep the server text: their screens translate them by `code`. Everything else is
-    // shown to the user as-is, so it is translated here (the server only speaks English).
-    throw new ApiError(code ? msg || localizeApiError(undefined, res.status) : localizeApiError(msg, res.status), res.status, code);
+    // Coded errors of the swap/chat/favorites endpoints are translated here by `code`; other coded
+    // errors (registration/OTP) keep the server text because their screens translate them by `code`.
+    // Everything else is shown to the user as-is, so it is translated here (the server only speaks English).
+    const coded = localizeApiErrorCode(code, path);
+    throw new ApiError(
+      coded ?? (code ? msg || localizeApiError(undefined, res.status) : localizeApiError(msg, res.status)),
+      res.status,
+      code,
+    );
   }
   const ct = res.headers.get("content-type") || "";
   return (ct.includes("json") ? res.json() : res.text()) as Promise<T>;

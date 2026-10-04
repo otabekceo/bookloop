@@ -4,17 +4,17 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Star } from "phosphor-react-native";
 
-import { AppText, Avatar, Stars, EmptyState, DirectionalIcon } from "@/src/components/ui";
+import { AppText, EmptyState, DirectionalIcon } from "@/src/components/ui";
+import { ReviewCard } from "@/src/components/ReviewCard";
 import { apiFetch } from "@/src/api";
 import { makeStyles, useTheme } from "@/src/theme";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
-import { formatDate } from "@/src/i18n";
 
 export default function Reviews() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const styles = useStyles();
   const { colors } = useTheme();
-  const { t, language } = useLanguage();
+  const { t } = useLanguage();
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
@@ -56,21 +56,7 @@ export default function Reviews() {
               </AppText>
             </View>
           }
-          renderItem={({ item }) => (
-            <View style={styles.card}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                <Avatar uri={item.rater_avatar} name={item.rater_name} size={38} />
-                <View style={{ flex: 1 }}>
-                  <AppText variant="label">{item.rater_name}</AppText>
-                  <AppText variant="caption" color={colors.muted}>
-                    {formatDate(item.created_at, language)}
-                  </AppText>
-                </View>
-                <Stars value={item.stars} />
-              </View>
-              {item.review ? <AppText variant="body" color={colors.onSurface}>{item.review}</AppText> : null}
-            </View>
-          )}
+          renderItem={({ item }) => <ReviewCard review={item} />}
           ListEmptyComponent={
             <EmptyState
               icon={<Star size={44} color={colors.muted} weight="light" />}
@@ -89,5 +75,4 @@ const useStyles = makeStyles((colors) => ({
   topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.surface },
   backBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   summary: { alignItems: "center", gap: 4, paddingVertical: 16, marginBottom: 6 },
-  card: { backgroundColor: colors.surfaceSecondary, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.border },
 }));

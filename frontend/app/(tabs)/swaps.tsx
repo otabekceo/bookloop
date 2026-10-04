@@ -19,6 +19,8 @@ type SwapMeta = {
   last_message_params?: Record<string, any> | null;
   other_user: { name: string; avatar_url?: string | null };
   is_requester: boolean;
+  /** Chat messages from the other reader not read yet (also for completed swaps). */
+  unread_count?: number;
 };
 
 type Buckets = { incoming: SwapMeta[]; outgoing: SwapMeta[]; active: SwapMeta[]; completed: SwapMeta[] };
@@ -115,19 +117,33 @@ export default function Swaps() {
               style={styles.row}
             >
               <Avatar uri={item.other_user.avatar_url} name={item.other_user.name} size={50} />
-              <View style={{ flex: 1, gap: 3 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <AppText variant="heading">{item.other_user.name}</AppText>
-                  <View style={[styles.statusPill, { backgroundColor: statusColor(item.status) + "22" }]}>
+              <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <AppText variant="heading" numberOfLines={1} style={{ flexShrink: 1 }}>{item.other_user.name}</AppText>
+                  <View style={[styles.statusPill, { backgroundColor: statusColor(item.status) + "22", flexShrink: 0 }]}>
                     <AppText variant="caption" color={statusColor(item.status)}>
                       {STATUS_KEYS[item.status] ? t(STATUS_KEYS[item.status]) : item.status}
                     </AppText>
                   </View>
                 </View>
-                <AppText variant="body" color={colors.muted} numberOfLines={1}>
-                  {renderKeyed(t, { key: item.last_message_key, params: item.last_message_params, text: item.last_message }) ||
-                    t("swaps.tapToOpen")}
-                </AppText>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <AppText
+                    variant={(item.unread_count || 0) > 0 ? "label" : "body"}
+                    color={(item.unread_count || 0) > 0 ? colors.onSurface : colors.muted}
+                    numberOfLines={1}
+                    style={{ flex: 1 }}
+                  >
+                    {renderKeyed(t, { key: item.last_message_key, params: item.last_message_params, text: item.last_message }) ||
+                      t("swaps.tapToOpen")}
+                  </AppText>
+                  {(item.unread_count || 0) > 0 && (
+                    <View testID={`swap-unread-${item.id}`} style={styles.unreadPill} accessibilityLabel={t("swaps.unreadCount", { count: item.unread_count })}>
+                      <AppText variant="caption" color={colors.onError} style={{ fontSize: 11 }}>
+                        {item.unread_count}
+                      </AppText>
+                    </View>
+                  )}
+                </View>
               </View>
               <DirectionalIcon>
                 <CaretRight size={18} color={colors.muted} />
@@ -155,4 +171,5 @@ const useStyles = makeStyles((colors) => ({
   tabItemActive: { backgroundColor: colors.surfaceInverse },
   row: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.surfaceSecondary, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: colors.border },
   statusPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
+  unreadPill: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5, backgroundColor: colors.notification, alignItems: "center", justifyContent: "center" },
 }));
