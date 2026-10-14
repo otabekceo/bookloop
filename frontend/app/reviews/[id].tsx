@@ -27,7 +27,7 @@ export default function Reviews() {
     <View style={styles.root}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <Pressable testID="back-button" onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable testID="back-button" accessibilityRole="button" accessibilityLabel={t("common.back")} onPress={() => router.back()} style={styles.backBtn}>
           <DirectionalIcon>
             <ArrowLeft size={22} color={colors.onSurface} />
           </DirectionalIcon>

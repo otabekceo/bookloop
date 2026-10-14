@@ -166,6 +166,7 @@ function RootNavigator() {
       <Stack.Screen name="settings/language" options={{ presentation: "modal" }} />
       <Stack.Screen name="settings/appearance" options={{ presentation: "modal" }} />
       <Stack.Screen name="settings/account" options={{ presentation: "modal" }} />
+      <Stack.Screen name="settings/blocked" options={{ presentation: "modal" }} />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="person/[id]" options={{ presentation: "card" }} />
       <Stack.Screen name="book/[id]" options={{ presentation: "card" }} />

@@ -13,20 +13,27 @@ import logging
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional
+from typing import Annotated, List, Literal, Optional
 
 import bcrypt
 import httpx
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Header, Request, UploadFile, File, Query
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import Response, JSONResponse, RedirectResponse
 from fastapi.concurrency import run_in_threadpool
+from pymongo import UpdateOne
 from pymongo.errors import DuplicateKeyError
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 
-from email_provider import get_email_provider, otp_email_body, EmailNotConfiguredError, EmailSendError
+from email_provider import (get_email_provider, otp_email_body, security_email_body, EmailNotConfiguredError,
+                            EmailSendError)
+import log_redaction
+import oauth_redirects
+import search_text
+from image_meta import UnsupportedImage, strip_metadata
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -45,6 +52,13 @@ GOOGLE_CLIENT_SECRET = (os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip()
 GOOGLE_AUTH_URL = os.environ.get("GOOGLE_AUTH_URL") or "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = os.environ.get("GOOGLE_TOKEN_URL") or "https://oauth2.googleapis.com/token"
 GOOGLE_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
+# Native Google sign-in (Android Credential Manager): Google signs ID tokens for our web client
+# (GOOGLE_CLIENT_ID = `aud`) only for apps registered as one of these Android OAuth clients (`azp`),
+# i.e. our package name + signing certificate. Unset = native Google sign-in is off.
+GOOGLE_ANDROID_CLIENT_IDS = tuple(
+    c.strip() for c in (os.environ.get("GOOGLE_ANDROID_CLIENT_IDS") or "").split(",") if c.strip()
+)
+GOOGLE_CERTS_URL = os.environ.get("GOOGLE_CERTS_URL") or "https://www.googleapis.com/oauth2/v3/certs"
 # Public https address of this API, used to build the redirect URI registered in Google Cloud.
 # Falls back to the address the request arrived on (fine locally, wrong behind a proxy).
 PUBLIC_BACKEND_URL = (os.environ.get("PUBLIC_BACKEND_URL") or "").strip().rstrip("/")
@@ -53,14 +67,20 @@ PUBLIC_BACKEND_URL = (os.environ.get("PUBLIC_BACKEND_URL") or "").strip().rstrip
 APPLE_AUDIENCES = tuple(a.strip() for a in (os.environ.get("APPLE_BUNDLE_IDS") or "").split(",") if a.strip())
 APPLE_KEYS_URL = os.environ.get("APPLE_KEYS_URL") or "https://appleid.apple.com/auth/keys"
 APPLE_ISSUER = "https://appleid.apple.com"
-# Where the app may be sent back to after Google: custom URL schemes of the app (Expo Go uses exp://),
-# plus web origins. http://localhost and http://127.0.0.1 are always allowed for development.
+# Where the app may be sent back to after Google: only the app's exact return screens under its own URL
+# scheme(s) and configured web origins (see oauth_redirects.py). ALLOW_DEV_REDIRECTS additionally allows
+# Expo Go (exp://), development builds and http://localhost — for local development only.
 APP_URL_SCHEMES = tuple(
-    s.strip().lower() for s in (os.environ.get("APP_URL_SCHEMES") or "exp,exps,bookloop").split(",") if s.strip()
+    s.strip().lower() for s in (os.environ.get("APP_URL_SCHEMES") or "bookloop").split(",") if s.strip()
 )
 APP_REDIRECT_ORIGINS = tuple(
     o.strip().rstrip("/") for o in (os.environ.get("APP_REDIRECT_ORIGINS") or "").split(",") if o.strip()
 )
+ALLOW_DEV_REDIRECTS = (os.environ.get("ALLOW_DEV_REDIRECTS") or "").strip().lower() in ("1", "true", "yes")
+# Kill switch for the browser Google flow returning to the app's URL scheme(s). Any app can claim a
+# custom scheme, so once the app signs in natively this is turned off ("0") and the browser flow only
+# returns to APP_REDIRECT_ORIGINS (web). On by default while older app builds still use it.
+GOOGLE_WEB_FLOW_APP_SCHEMES = (os.environ.get("GOOGLE_WEB_FLOW_APP_SCHEMES") or "1").strip().lower() in ("1", "true", "yes")
 
 # Uploaded images live on local disk under STORAGE_DIR (default: backend/uploads). In production
 # point STORAGE_DIR at a persistent volume, and back it up together with the database.
@@ -69,6 +89,10 @@ APP_NAME = "bookloop"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("bookloop")
+# Hosting logs are read by more people and kept longer than the database: credentials, signed file links,
+# OAuth codes and push tokens are masked in every log line (see log_redaction.py), uvicorn's access log
+# (full request URLs) included.
+log_redaction.install()
 
 FILE_PREFIX = "/api/files/"
 FILE_URL_TTL_HOURS = 24
@@ -128,8 +152,20 @@ class SignedJSONResponse(JSONResponse):
         return super().render(_sign_tree(content))
 
 
-app = FastAPI()
+# /docs, /redoc and /openapi.json describe every route and model of the API; served only when
+# ENABLE_API_DOCS=1 (local development), never by default.
+API_DOCS = (os.environ.get("ENABLE_API_DOCS") or "").strip().lower() in ("1", "true", "yes")
+app = FastAPI(openapi_url="/openapi.json" if API_DOCS else None)
 api = APIRouter(prefix="/api", default_response_class=SignedJSONResponse)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    """422 saying which field is wrong and why — without echoing the rejected input back (it can be a
+    password or a whole request body) or library details (pydantic's version and documentation links)."""
+    return JSONResponse(status_code=422, content={"detail": [
+        {"type": e.get("type"), "loc": list(e.get("loc") or ()), "msg": e.get("msg")} for e in exc.errors()
+    ]})
 
 
 def now_utc() -> datetime:
@@ -138,6 +174,25 @@ def now_utc() -> datetime:
 
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:16]}"
+
+
+# ----------------------------------------------------------------------------
+# Rate limiting: one small `rate_events` collection (TTL-expired after 2 days) shared by every
+# limited action, so limits hold across restarts and multiple server processes.
+# ----------------------------------------------------------------------------
+async def _rate_count(key: str, window: timedelta) -> int:
+    return await db.rate_events.count_documents({"key": key, "at": {"$gte": now_utc() - window}})
+
+
+async def _rate_record(key: str) -> None:
+    await db.rate_events.insert_one({"key": key, "at": now_utc()})
+
+
+async def _rate_limit(key: str, limit: int, window: timedelta) -> None:
+    """Count this action under `key`; 429 `rate_limited` once `limit` were made within `window`."""
+    if await _rate_count(key, window) >= limit:
+        raise _coded(429, "rate_limited", "Too many requests — please try again later")
+    await _rate_record(key)
 
 
 # ----------------------------------------------------------------------------
@@ -151,6 +206,12 @@ def _storage_file(path: str) -> Path:
     if STORAGE_DIR != target and STORAGE_DIR not in target.parents:
         raise FileNotFoundError(path)
     return target
+
+
+def delete_object(path: str) -> None:
+    target = _storage_file(path)
+    if target.is_file():
+        target.unlink()
 
 
 def init_storage() -> None:
@@ -188,9 +249,26 @@ def haversine_km(lat1, lng1, lat2, lng2) -> float:
 
 
 UNKNOWN_DISTANCE_KM = 999.0
-# Privacy floor: readers closer than this are reported as exactly this far, so the API never reveals
-# a finer proximity than "within 100 m" (the app renders this value as that phrase).
-MIN_REPORTED_DISTANCE_KM = 0.1
+# Location privacy. Another reader's position never leaves the server, and the distance to them is
+# deliberately coarse, because a client can claim any position of its own (PUT /users/me/location)
+# and could otherwise triangulate someone from a few exact distances:
+#  * distances are measured to the CENTER of the ~1 km grid cell the other reader is in, so even
+#    perfect triangulation only finds that cell, never a home;
+#  * they are reported in whole km, and anything under 1 km as exactly 1 km ("within 1 km");
+#  * distance filters use the same coarse value, so they cannot be used to probe finer.
+# Stored coordinates are kept at ~110 m (3 decimals): enough for the reader's own map, no more.
+MIN_REPORTED_DISTANCE_KM = 1.0
+PUBLIC_CELL_DEG = 0.01
+LOCATION_STORE_DECIMALS = 3
+
+
+def _cell_center(lat: float, lng: float) -> tuple:
+    return ((math.floor(lat / PUBLIC_CELL_DEG) + 0.5) * PUBLIC_CELL_DEG,
+            (math.floor(lng / PUBLIC_CELL_DEG) + 0.5) * PUBLIC_CELL_DEG)
+
+
+def public_distance_km(km: float) -> float:
+    return max(MIN_REPORTED_DISTANCE_KM, float(round(km)))
 
 
 def has_location(u: Optional[dict]) -> bool:
@@ -204,22 +282,33 @@ def has_location(u: Optional[dict]) -> bool:
 
 
 def user_distance_km(a: Optional[dict], b: Optional[dict]) -> float:
-    """Distance between two users' real locations; UNKNOWN_DISTANCE_KM when either has none."""
+    """Coarse distance from viewer `a` to reader `b` (see "Location privacy" above);
+    UNKNOWN_DISTANCE_KM when either has no real location. Always call it viewer-first."""
     if not has_location(a) or not has_location(b):
         return UNKNOWN_DISTANCE_KM
-    return max(MIN_REPORTED_DISTANCE_KM, haversine_km(a["lat"], a["lng"], b["lat"], b["lng"]))
+    blat, blng = _cell_center(b["lat"], b["lng"])
+    return public_distance_km(haversine_km(a["lat"], a["lng"], blat, blng))
 
 
 # ----------------------------------------------------------------------------
 # Models
 # ----------------------------------------------------------------------------
 SUPPORTED_LANGUAGES = ("uz", "en", "ru", "it", "ar")
+# Upper bounds on free text, so no field can be used to store or relay arbitrary amounts of data.
+NAME_MAX_CHARS = 80
+BIO_MAX_CHARS = 1000
+TITLE_MAX_CHARS = 300
+AUTHOR_MAX_CHARS = 200
+MESSAGE_MAX_CHARS = 4000
+URL_MAX_CHARS = 1000
+# One entry of a profile list (a genre, language or reading interest); the app offers fixed values.
+ProfileTag = Annotated[str, Field(max_length=NAME_MAX_CHARS)]
 
 
 class RegisterBody(BaseModel):
     email: EmailStr
     password: str
-    name: str
+    name: str = Field(max_length=NAME_MAX_CHARS)
     preferred_language: Optional[str] = None
 
 
@@ -228,21 +317,17 @@ class LoginBody(BaseModel):
     password: str
 
 
-class SessionBody(BaseModel):
-    session_id: str
-
-
 class ProfileUpdate(BaseModel):
-    name: Optional[str] = None
-    bio: Optional[str] = None
+    name: Optional[str] = Field(default=None, max_length=NAME_MAX_CHARS)
+    bio: Optional[str] = Field(default=None, max_length=BIO_MAX_CHARS)
     # city / neighborhood / lat / lng are deliberately NOT here: location only comes from the device via
     # PUT /users/me/location. Older app builds still send them on save; pydantic drops unknown fields.
-    avatar_url: Optional[str] = None
-    genres: Optional[List[str]] = None
-    languages: Optional[List[str]] = None
-    reading_interests: Optional[List[str]] = None
+    avatar_url: Optional[str] = Field(default=None, max_length=URL_MAX_CHARS)
+    genres: Optional[List[ProfileTag]] = Field(default=None, max_length=30)
+    languages: Optional[List[ProfileTag]] = Field(default=None, max_length=20)
+    reading_interests: Optional[List[ProfileTag]] = Field(default=None, max_length=30)
+    preferred_language: Optional[str] = Field(default=None, max_length=10)
     is_exchanging: Optional[bool] = None
-    preferred_language: Optional[str] = None
     # Set to true by the Welcome screen's "Start exploring" tap — never shown again after that.
     onboarding_completed: Optional[bool] = None
     # Push notifications opt-in (Profile -> Notifications). Missing on older accounts = off.
@@ -260,14 +345,14 @@ class LocationUpdate(BaseModel):
 
 
 class BookBody(BaseModel):
-    title: str
-    author: str = ""
-    cover_url: Optional[str] = None
-    condition: str = "Good"
-    language: str = "English"
-    genre: str = "Fiction"
-    status: str = "Available"
-    isbn: Optional[str] = None
+    title: str = Field(max_length=TITLE_MAX_CHARS)
+    author: str = Field(default="", max_length=AUTHOR_MAX_CHARS)
+    cover_url: Optional[str] = Field(default=None, max_length=URL_MAX_CHARS)
+    condition: str = Field(default="Good", max_length=40)
+    language: str = Field(default="English", max_length=40)
+    genre: str = Field(default="Fiction", max_length=40)
+    status: str = Field(default="Available", max_length=20)
+    isbn: Optional[str] = Field(default=None, max_length=20)
 
 
 BOOK_STATUSES = ("Available", "Reserved", "Swapped")
@@ -275,14 +360,14 @@ BOOK_STATUSES = ("Available", "Reserved", "Swapped")
 
 class BookUpdate(BaseModel):
     """Partial update: only the fields the client sends are changed."""
-    title: Optional[str] = None
-    author: Optional[str] = None
-    cover_url: Optional[str] = None
-    condition: Optional[str] = None
-    language: Optional[str] = None
-    genre: Optional[str] = None
-    status: Optional[str] = None
-    isbn: Optional[str] = None
+    title: Optional[str] = Field(default=None, max_length=TITLE_MAX_CHARS)
+    author: Optional[str] = Field(default=None, max_length=AUTHOR_MAX_CHARS)
+    cover_url: Optional[str] = Field(default=None, max_length=URL_MAX_CHARS)
+    condition: Optional[str] = Field(default=None, max_length=40)
+    language: Optional[str] = Field(default=None, max_length=40)
+    genre: Optional[str] = Field(default=None, max_length=40)
+    status: Optional[str] = Field(default=None, max_length=20)
+    isbn: Optional[str] = Field(default=None, max_length=20)
 
 
 class SwapCreate(BaseModel):
@@ -312,8 +397,8 @@ class ProposeBody(BaseModel):
 
 
 class MessageBody(BaseModel):
-    text: str = ""
-    image_url: Optional[str] = None
+    text: str = Field(default="", max_length=MESSAGE_MAX_CHARS)
+    image_url: Optional[str] = Field(default=None, max_length=URL_MAX_CHARS)
     # Chosen by the app for each message it sends. A retry of the same send (slow network, app
     # resent after a timeout) carries the same id and gets the original message back instead of a
     # duplicate.
@@ -374,6 +459,12 @@ def public_user(u: dict, private: bool = False) -> dict:
     plus a server-computed distance."""
     if not u:
         return {}
+    if u.get("deleted_at"):
+        # A deleted account (seen in someone's swap history): no name, photo or anything else.
+        return {"user_id": u["user_id"], "name": "", "avatar_url": None, "bio": "", "city": None,
+                "neighborhood": None, "genres": [], "languages": [], "reading_interests": [], "badges": [],
+                "is_exchanging": False, "rating": 0.0, "rating_count": 0, "swaps_count": 0,
+                "preferred_language": None, "is_deleted": True}
     swaps = u.get("swaps_count", 0)
     located = has_location(u)
     out = {
@@ -410,6 +501,33 @@ def public_user(u: dict, private: bool = False) -> dict:
             }
         )
     return out
+
+
+# Images other readers' apps will load. An arbitrary URL there would let anyone make every viewer's
+# phone contact a server of their choosing (a tracking pixel that reveals IP addresses and when the
+# image was seen) or show content that never went through the upload checks. So: the caller's own
+# uploads only — plus Open Library covers for books — or the value already stored (e.g. the Google
+# profile photo an account was created with).
+COVER_URL_PREFIXES = ("https://covers.openlibrary.org/",)
+
+
+def _url_base(url: Optional[str]) -> str:
+    return (url or "").split("?", 1)[0].strip()
+
+
+def checked_image_url(url: Optional[str], owner_id: str, current: Optional[str] = None,
+                      allow_covers: bool = False) -> Optional[str]:
+    """The URL to store (signature query removed), or a 400 `invalid_image_url`."""
+    base = _url_base(url)
+    if not base:
+        return None
+    if current and base == _url_base(current):
+        return current
+    if base.startswith(f"{FILE_PREFIX}{APP_NAME}/uploads/{owner_id}/") and "/../" not in base:
+        return base
+    if allow_covers and base.startswith(COVER_URL_PREFIXES):
+        return base
+    raise _coded(400, "invalid_image_url", "Images must be uploaded through BookLoop")
 
 
 def clean_book(b: dict) -> dict:
@@ -483,6 +601,10 @@ OTP_TTL_MINUTES = 10
 OTP_MAX_ATTEMPTS = 5
 OTP_RESEND_COOLDOWN_SECONDS = 60
 OTP_MAX_SENDS = 10  # absolute cap per pending registration — defense in depth beyond the cooldown
+# Cap on verification emails per hour across ALL addresses: anyone can request a code for any address, so
+# without it a script could send BookLoop emails to unlimited addresses (spam under our domain, the email
+# provider's quota used up). Set it above the expected sign-ups per hour, below the provider's quota.
+OTP_EMAILS_PER_HOUR = int(os.environ.get("OTP_EMAILS_PER_HOUR") or 60)
 EMAIL_VERIFICATION_TTL_MINUTES = 15
 PASSWORD_MIN_LENGTH = 8
 # Debug/test only: echoes OTP codes in API responses and enables the instant-registration test
@@ -496,7 +618,7 @@ if OTP_DEBUG_MODE:
 
 
 class RequestOtpBody(BaseModel):
-    name: str
+    name: str = Field(max_length=NAME_MAX_CHARS)
     email: EmailStr
     preferred_language: Optional[str] = None
 
@@ -571,6 +693,7 @@ def _build_user_doc(
         "onboarding_completed": onboarding_completed,
         "created_at": now_utc(),
         "deleted_at": None,
+        **_name_search_fields(name),
     }
 
 
@@ -590,6 +713,7 @@ async def _issue_otp(email: str, name: Optional[str], preferred_language: Option
             raise _otp_error(429, "rate_limited", f"Please wait {max(wait, 1)}s before requesting another code")
         if (existing.get("send_count") or 0) >= OTP_MAX_SENDS:
             raise _otp_error(429, "rate_limited", "Too many codes requested for this email — try again later")
+    await _rate_limit("otp-email:all", OTP_EMAILS_PER_HOUR, timedelta(hours=1))
 
     code = _generate_otp()
     name = (name or (existing or {}).get("name") or "").strip()
@@ -618,7 +742,9 @@ async def _issue_otp(email: str, name: Optional[str], preferred_language: Option
         await provider.send(to=email, subject=subject, html=html, text=text)
     except EmailNotConfiguredError as e:
         if not OTP_DEBUG_MODE:
-            raise HTTPException(status_code=503, detail=str(e))
+            # The how-to-configure text (env var names, debug switches) is for the operator's log only.
+            logger.error(f"OTP email not sent: {e}")
+            raise HTTPException(status_code=503, detail="Email is temporarily unavailable — please try again later")
         logger.warning(f"OTP email not sent (no provider configured) — continuing because OTP_DEBUG_MODE is on")
     except EmailSendError as e:
         raise HTTPException(status_code=502, detail="Could not send the verification email — please try again") from e
@@ -661,15 +787,25 @@ async def verify_otp(body: VerifyOtpBody):
         raise _otp_error(400, "otp_expired", "Verification code expired — request a new one")
     if (pending.get("attempt_count") or 0) >= OTP_MAX_ATTEMPTS:
         raise _otp_error(429, "too_many_attempts", "Too many incorrect attempts — request a new code")
+    # Every attempt is counted before the code is checked, in one atomic step with the limit: parallel
+    # guesses can't all read the same attempt_count and each be checked.
+    counted = await db.pending_registrations.update_one(
+        {"email": email, "otp_hash": pending["otp_hash"], "attempt_count": {"$not": {"$gte": OTP_MAX_ATTEMPTS}}},
+        {"$inc": {"attempt_count": 1}},
+    )
+    if not counted.modified_count:
+        raise _otp_error(429, "too_many_attempts", "Too many incorrect attempts — request a new code")
     if not verify_pw(body.code.strip(), pending["otp_hash"]):
-        await db.pending_registrations.update_one({"email": email}, {"$inc": {"attempt_count": 1}})
         raise _otp_error(400, "invalid_otp", "Incorrect verification code")
 
     # One-time use: a fresh, server-issued token proves verification for the next step. The OTP hash
-    # is cleared so it can never be replayed even within its expiry window.
+    # is cleared first, atomically, so the code is redeemed once even by parallel requests.
+    redeemed = await db.pending_registrations.update_one(
+        {"email": email, "otp_hash": pending["otp_hash"]}, {"$set": {"otp_hash": None, "otp_verified": True}})
+    if not redeemed.modified_count:
+        raise _otp_error(400, "otp_expired", "Verification code expired — request a new one")
     token = secrets.token_urlsafe(32)
     await db.email_verifications.insert_one({"token": token, "email": email, "created_at": now_utc()})
-    await db.pending_registrations.update_one({"email": email}, {"$set": {"otp_hash": None, "otp_verified": True}})
     return {"verification_token": token, "expires_in_seconds": EMAIL_VERIFICATION_TTL_MINUTES * 60}
 
 
@@ -736,11 +872,37 @@ if OTP_DEBUG_MODE:
         return {"session_token": token, "user": public_user(user, private=True)}
 
 
+LOGIN_FAILURES_ALLOWED = 10
+LOGIN_FAILURE_WINDOW = timedelta(minutes=15)
+# Accounts whose passwords are public: the shared test account documented in this (public) repository, and
+# every account the test suite made (test_account, only created by /auth/register/dev-instant). They sign in
+# only on a test server (OTP_DEBUG_MODE), never on one reachable from the internet.
+PUBLIC_TEST_EMAILS = ("test@bookloop.com",)
+
+
+def _test_only_account(user: dict) -> bool:
+    return not OTP_DEBUG_MODE and bool(user.get("test_account") or user.get("email") in PUBLIC_TEST_EMAILS)
+
+
 @api.post("/auth/login")
 async def login(body: LoginBody):
+    # Password guessing: after 10 wrong passwords for an email within 15 minutes, that email is
+    # locked for the rest of the window (successful logins never count).
+    key = f"login-fail:{body.email.lower()}"
+    too_many = _coded(429, "too_many_attempts", "Too many sign-in attempts — please try again in a few minutes")
+    if await _rate_count(key, LOGIN_FAILURE_WINDOW) >= LOGIN_FAILURES_ALLOWED:
+        raise too_many
+    # The attempt is recorded before the password is checked (and removed again if it was right), so
+    # parallel guesses can't all pass the count above and each be checked.
+    attempt = (await db.rate_events.insert_one({"key": key, "at": now_utc()})).inserted_id
+    if await _rate_count(key, LOGIN_FAILURE_WINDOW) > LOGIN_FAILURES_ALLOWED:
+        await db.rate_events.delete_one({"_id": attempt})
+        raise too_many
     user = await db.users.find_one({"email": body.email.lower(), "deleted_at": None})
-    if not user or not user.get("password_hash") or not verify_pw(body.password, user["password_hash"]):
+    if (not user or not user.get("password_hash") or _test_only_account(user)
+            or not verify_pw(body.password, user["password_hash"])):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    await db.rate_events.delete_one({"_id": attempt})
     token = await create_session(user["user_id"])
     return {"session_token": token, "user": public_user(user, private=True)}
 
@@ -749,24 +911,79 @@ async def login(body: LoginBody):
 # Flow: the app opens /auth/google/start in a browser -> Google -> /auth/google/callback (this API
 # exchanges the code with our client secret and finds/creates the user) -> back to the app with a
 # one-time `session_id` -> the app POSTs it to /auth/session and receives a normal session token.
+#
+# Binding to the app that started it (PKCE-style, RFC 7636 S256): the app keeps a random
+# `code_verifier` to itself and sends only its SHA-256 (`code_challenge`) to /start. The one-time
+# session_id only turns into a session together with that verifier, so a session_id that reaches anyone
+# else (another app claiming the URL scheme, a crafted redirect, a shared link) is useless to them.
+# Linking Google in Settings works the same way: the callback only parks the Google identity; the app
+# that started the link completes it with its verifier while signed in as the same account.
+#
+# Every redirect back to the app carries `attempt` (the first characters of the challenge — not a
+# secret, the challenge already went through the browser) so the app can tell which of its own sign-in
+# attempts an incoming link belongs to, and ignore links it did not start.
+OAUTH_STATE_TTL = timedelta(minutes=10)
+GOOGLE_LOGIN_TTL = timedelta(minutes=2)
+GOOGLE_LINK_TTL = timedelta(minutes=5)
+PKCE_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")  # base64url(SHA-256), unpadded
+PKCE_VERIFIER_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")  # RFC 7636 section 4.1
+ATTEMPT_CHARS = 16
+# Fixed reasons a sign-in redirect may carry (anything else becomes "failed"):
+#   link_required    - the Google email matches an existing account, but it isn't an address Google
+#                      vouches for (see _google_email_trusted): sign in with the password, then link.
+#   account_mismatch - that account already has a different Google account linked.
+GOOGLE_ERRORS = ("cancelled", "failed", "link_required", "account_mismatch")
+
+if ALLOW_DEV_REDIRECTS:
+    logger.warning(
+        "ALLOW_DEV_REDIRECTS is ON: Google sign-in may return to exp://, development builds and "
+        "http://localhost. Never run with this on a backend reachable from the internet."
+    )
+
+
 def _google_configured() -> bool:
     return bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
 
 
+def _google_native_configured() -> bool:
+    if not (GOOGLE_CLIENT_ID and GOOGLE_ANDROID_CLIENT_IDS):
+        return False
+    try:
+        import jwt  # noqa: F401  (PyJWT[crypto], as for Apple)
+        return True
+    except ImportError:
+        return False
+
+
 def _allowed_app_redirect(url: str) -> bool:
     """Only send the one-time login id back to the app itself, never to an arbitrary site."""
-    try:
-        p = urlparse(url)
-    except ValueError:
-        return False
-    if p.scheme in APP_URL_SCHEMES:
-        return True
-    if p.scheme in ("http", "https") and p.hostname and p.username is None:
-        if f"{p.scheme}://{p.netloc}" in APP_REDIRECT_ORIGINS:
-            return True
-        if p.scheme == "http" and p.hostname in ("localhost", "127.0.0.1"):
-            return True
-    return False
+    return oauth_redirects.allowed_app_redirect(url, schemes=APP_URL_SCHEMES if GOOGLE_WEB_FLOW_APP_SCHEMES else (),
+                                                origins=APP_REDIRECT_ORIGINS, dev=ALLOW_DEV_REDIRECTS)
+
+
+def _is_app_scheme_redirect(url: str) -> bool:
+    """A return address that any app on the phone could claim (bookloop://, exp://), unlike a web origin."""
+    return urlparse(url).scheme not in ("http", "https")
+
+
+def _pkce_challenge(verifier: str) -> str:
+    return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+
+
+def _require_pkce(challenge: Optional[str], method: Optional[str]) -> str:
+    if method != "S256" or not challenge or not PKCE_CHALLENGE_RE.match(challenge):
+        raise _coded(400, "pkce_required", "Update the app to sign in with Google")
+    return challenge
+
+
+def _valid_verifier(verifier: Optional[str]) -> bool:
+    return bool(verifier and PKCE_VERIFIER_RE.match(verifier))
+
+
+def _fresh_since(ttl: timedelta) -> dict:
+    """Mongo filter on created_at: records older than `ttl` are never redeemed, whether or not the TTL
+    index has removed them yet (it only runs about once a minute)."""
+    return {"$gte": now_utc() - ttl}
 
 
 def _app_redirect(url: str, **params) -> RedirectResponse:
@@ -793,22 +1010,25 @@ def _google_claims(tok: dict) -> Optional[dict]:
 
 @api.get("/auth/providers")
 async def auth_providers():
-    return {"google": _google_configured(), "apple": _apple_configured()}
+    return {"google": _google_configured(), "google_native": _google_native_configured(), "apple": _apple_configured()}
 
 
 @api.get("/auth/google/start")
-async def google_start(request: Request, redirect: str):
+async def google_start(request: Request, redirect: str, code_challenge: Optional[str] = None,
+                       code_challenge_method: Optional[str] = None):
     if not _google_configured():
         raise HTTPException(status_code=503, detail="Google sign-in is not configured")
     if not _allowed_app_redirect(redirect):
         raise HTTPException(status_code=400, detail="Redirect URL not allowed")
-    return RedirectResponse(await _google_auth_url(request, redirect), status_code=302)
+    challenge = _require_pkce(code_challenge, code_challenge_method)
+    return RedirectResponse(await _google_auth_url(request, redirect, challenge), status_code=302)
 
 
-async def _google_auth_url(request: Request, redirect: str, link_user_id: Optional[str] = None) -> str:
+async def _google_auth_url(request: Request, redirect: str, code_challenge: str,
+                           link_user_id: Optional[str] = None) -> str:
     state = secrets.token_urlsafe(32)
     await db.oauth_states.insert_one({"state": state, "redirect": redirect, "link_user_id": link_user_id,
-                                      "created_at": now_utc()})
+                                      "code_challenge": code_challenge, "created_at": now_utc()})
     callback = (PUBLIC_BACKEND_URL or str(request.base_url).rstrip("/")) + "/api/auth/google/callback"
     params = {
         "client_id": GOOGLE_CLIENT_ID,
@@ -823,28 +1043,42 @@ async def _google_auth_url(request: Request, redirect: str, link_user_id: Option
 
 class LinkStartBody(BaseModel):
     redirect: str = Field(max_length=500)
+    code_challenge: Optional[str] = Field(default=None, max_length=64)
+    code_challenge_method: Optional[str] = Field(default=None, max_length=10)
 
 
 @api.post("/auth/google/link")
 async def google_link_start(body: LinkStartBody, request: Request, user: dict = Depends(get_current_user)):
-    """Settings -> Account -> Link Google. Returns the Google URL for the app to open; the signed-in
-    account is bound to the single-use OAuth state server-side, so the browser needs no credentials."""
+    """Settings -> Account -> Link Google. Returns the Google URL for the app to open. The signed-in
+    account and the app's code_challenge are bound to the single-use OAuth state server-side."""
     if not _google_configured():
         raise HTTPException(status_code=503, detail="Google sign-in is not configured")
     if not _allowed_app_redirect(body.redirect):
         raise HTTPException(status_code=400, detail="Redirect URL not allowed")
-    return {"url": await _google_auth_url(request, body.redirect, link_user_id=user["user_id"])}
+    challenge = _require_pkce(body.code_challenge, body.code_challenge_method)
+    return {"url": await _google_auth_url(request, body.redirect, challenge, link_user_id=user["user_id"])}
 
 
 @api.get("/auth/google/callback")
 async def google_callback(request: Request, state: str = "", code: str = "", error: str = ""):
     # `state` is single-use and short-lived; without a valid one this isn't a sign-in we started.
     rec = await db.oauth_states.find_one_and_delete({"state": state}) if state else None
-    if not rec or (now_utc() - rec["created_at"].replace(tzinfo=timezone.utc)) > timedelta(minutes=10):
+    if (not rec or not rec.get("code_challenge")
+            or now_utc() - _aware(rec["created_at"]) > OAUTH_STATE_TTL):
         raise HTTPException(status_code=400, detail="Invalid or expired sign-in attempt")
     redirect = rec["redirect"]
+    challenge = rec["code_challenge"]
+    attempt = challenge[:ATTEMPT_CHARS]
+    linking = bool(rec.get("link_user_id"))
+
+    def fail(reason: str) -> RedirectResponse:
+        # Fixed values only: nothing Google (or whoever crafted the callback URL) sent is reflected.
+        if linking:
+            return _app_redirect(redirect, link_error="failed", attempt=attempt)
+        return _app_redirect(redirect, google_error=reason if reason in GOOGLE_ERRORS else "failed", attempt=attempt)
+
     if error or not code:
-        return _app_redirect(redirect, google_error=error or "cancelled")
+        return fail("cancelled")
     callback = (PUBLIC_BACKEND_URL or str(request.base_url).rstrip("/")) + "/api/auth/google/callback"
     try:
         async with httpx.AsyncClient(timeout=20) as hc:
@@ -863,36 +1097,134 @@ async def google_callback(request: Request, state: str = "", code: str = "", err
         logger.warning(f"Google token exchange failed: {e!r}")
         tok = None
     claims = _google_claims(tok) if tok else None
-    if rec.get("link_user_id"):
-        # Linking Google to the account that started this from Settings — never a sign-in.
+    if linking:
+        # Linking Google to the account that started this from Settings — never a sign-in, and not
+        # linked yet: the app completes it (POST /auth/google/link/complete) with its verifier.
         if not claims or not claims.get("sub"):
-            return _app_redirect(redirect, link_error="failed")
-        err = await _link_identity(rec["link_user_id"], "google", claims["sub"], claims["email"].lower(), True)
-        return _app_redirect(redirect, **({"link_error": err} if err else {"linked": "google"}))
-    user = await _google_user(claims) if claims else None
+            return fail("failed")
+        lid = secrets.token_urlsafe(32)
+        await db.google_link_tickets.insert_one({
+            "lid": lid, "user_id": rec["link_user_id"], "subject": claims["sub"],
+            "email": claims["email"].lower(), "code_challenge": challenge, "created_at": now_utc(),
+            "app_scheme": _is_app_scheme_redirect(redirect),
+        })
+        return _app_redirect(redirect, link_id=lid, attempt=attempt)
+    try:
+        user = await _google_user(claims) if claims else None
+    except GoogleRefused as e:
+        return fail(e.code)
     if not user:
-        return _app_redirect(redirect, google_error="failed")
+        return fail("failed")
     sid = secrets.token_urlsafe(32)
-    await db.google_logins.insert_one({"sid": sid, "user_id": user["user_id"], "created_at": now_utc()})
-    return _app_redirect(redirect, session_id=sid)
+    await db.google_logins.insert_one({"sid": sid, "user_id": user["user_id"], "code_challenge": challenge,
+                                       "created_at": now_utc()})
+    return _app_redirect(redirect, session_id=sid, attempt=attempt)
+
+
+# Which app build each account uses: X-App-Version / X-App-Platform (no header = a build from before
+# native Google sign-in), plus how its last Google sign-in ran. Decides when GOOGLE_WEB_FLOW_APP_SCHEMES
+# can be switched off; scripts/client_versions.py summarizes it.
+CLIENT_HEADER_RE = re.compile(r"^[0-9A-Za-z._+-]{1,32}$")
+CLIENT_SEEN_REFRESH = timedelta(hours=12)
+
+
+async def _record_client(user: dict, request: Request, google_signin: Optional[str] = None) -> None:
+    def header(name: str) -> Optional[str]:
+        v = (request.headers.get(name) or "").strip()
+        return v if CLIENT_HEADER_RE.match(v) else None
+
+    now = now_utc()
+    fields = {"client_version": header("x-app-version"), "client_platform": header("x-app-platform")}
+    seen = user.get("client_seen_at")
+    if (not google_signin and all(user.get(k) == v for k, v in fields.items())
+            and seen and now - _aware(seen) < CLIENT_SEEN_REFRESH):
+        return
+    fields["client_seen_at"] = now
+    if google_signin:
+        fields.update(google_signin_via=google_signin, google_signin_at=now)
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": fields})
+
+
+class SessionBody(BaseModel):
+    session_id: str = Field(max_length=100)
+    code_verifier: Optional[str] = Field(default=None, max_length=128)
 
 
 @api.post("/auth/session")
-async def google_session(body: SessionBody):
-    """Redeem the one-time id from a completed Google sign-in for a normal app session."""
-    rec = await db.google_logins.find_one_and_delete({"sid": body.session_id})
-    if not rec or (now_utc() - rec["created_at"].replace(tzinfo=timezone.utc)) > timedelta(minutes=2):
+async def google_session(body: SessionBody, request: Request):
+    """Redeem the one-time id from a completed Google sign-in, together with the verifier of the app
+    that started it, for a normal app session."""
+    if not _valid_verifier(body.code_verifier):
+        raise _coded(400, "pkce_required", "Update the app to sign in with Google")
+    # One atomic step: only the matching verifier, only while fresh, only once. A wrong verifier does
+    # not consume the id, so someone holding a stolen id cannot even spoil the real sign-in.
+    rec = await db.google_logins.find_one_and_delete({
+        "sid": body.session_id, "code_challenge": _pkce_challenge(body.code_verifier),
+        "created_at": _fresh_since(GOOGLE_LOGIN_TTL),
+    })
+    if not rec:
         raise HTTPException(status_code=401, detail="Invalid session")
     user = await db.users.find_one({"user_id": rec["user_id"], "deleted_at": None}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=401, detail="Invalid session")
     token = await create_session(user["user_id"])
+    await _record_client(user, request, "google_web")
     return {"session_token": token, "user": public_user(user, private=True)}
+
+
+class LinkCompleteBody(BaseModel):
+    link_id: str = Field(max_length=100)
+    code_verifier: Optional[str] = Field(default=None, max_length=128)
+
+
+@api.post("/auth/google/link/complete")
+async def google_link_complete(body: LinkCompleteBody, user: dict = Depends(get_current_user)):
+    """Finishes Settings -> Link Google: only for the account that started it, only with the verifier
+    of the app that started it, only once and only while fresh. Conflicts (Google account already
+    linked elsewhere, another Google account already linked here) are decided at this moment, against
+    the unique indexes on auth_identities, not when the browser came back."""
+    if not _valid_verifier(body.code_verifier):
+        raise _coded(400, "pkce_required", "Update the app to link Google")
+    rec = await db.google_link_tickets.find_one_and_delete({
+        "lid": body.link_id, "user_id": user["user_id"], "code_challenge": _pkce_challenge(body.code_verifier),
+        "created_at": _fresh_since(GOOGLE_LINK_TTL),
+    })
+    if not rec:
+        raise _coded(400, "link_invalid", "This link request is invalid or has expired — please try again")
+    # Started from the app's URL scheme: another app on the phone could have started it (with its own
+    # verifier and its own signed-in account) and had a victim pick their Google account. Until the app
+    # links natively, only a Google account with this account's own email can be linked this way.
+    if rec.get("app_scheme") and (rec.get("email") or "") != (user.get("email") or "").lower():
+        raise _coded(409, "google_email_mismatch", "Only a Google account with this account's email can be linked")
+    err = await _link_from_settings(user, "google", rec["subject"], rec.get("email"), True)
+    if err:
+        raise _coded(409, err, "This Google account can't be linked to this account")
+    return await account_identities(user)
+
+
+class GoogleRefused(Exception):
+    """A verified Google identity that must not open the account its email points at. `code` is one of
+    GOOGLE_ERRORS."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+GOOGLE_CONSUMER_DOMAINS = ("gmail.com", "googlemail.com")
+
+
+def _google_email_trusted(claims: dict, email: str) -> bool:
+    """Whether Google's `email` identifies the person well enough to open an EXISTING account by email.
+    Google's guidance: only for Gmail addresses and Google Workspace accounts (`hd` claim). Any other
+    address was verified when the Google account was created and may belong to someone else by now."""
+    return email.rsplit("@", 1)[-1] in GOOGLE_CONSUMER_DOMAINS or bool(claims.get("hd"))
 
 
 async def _google_user(claims: dict) -> Optional[dict]:
     """The account for a verified Google identity: the one it is linked to; else the account with the
-    same Google-verified email (then the identity is linked to it); else a new account."""
+    same Google-verified email (then the identity is linked to it) — only when Google vouches for the
+    address and the account has no other Google account linked, else GoogleRefused; else a new account."""
     email = claims["email"].lower()
     name = claims.get("name") or email.split("@")[0]
     picture = claims.get("picture")
@@ -906,6 +1238,23 @@ async def _google_user(claims: dict) -> Optional[dict]:
         if user.get("deleted_at"):
             return None
         uid = user["user_id"]
+        # Accounts from before auth_identities kept Google's id on the user record (google_sub): that
+        # proves it's the same Google account whatever the address.
+        legacy_same = bool(sub) and user.get("google_sub") == sub
+        if not legacy_same and not _google_email_trusted(claims, email):
+            raise GoogleRefused("link_required")
+        # Another Google account linked here shares the email (e.g. a recycled Workspace address). The
+        # same Google account can appear here too, linked a moment ago by a concurrent sign-in.
+        other = {"user_id": uid, "provider": "google", **({"subject": {"$ne": sub}} if sub else {})}
+        if await db.auth_identities.find_one(other, {"_id": 1}):
+            raise GoogleRefused("account_mismatch")
+        if sub:
+            had_other_login = await _has_other_login(user, "google")
+            status = await _link_identity_status(uid, "google", sub, email, True)
+            if status not in ("linked", "already"):  # a concurrent link of another account won the race
+                raise GoogleRefused("account_mismatch" if status == "provider_already_linked" else "failed")
+            if status == "linked" and had_other_login:
+                await _security_notice(user, "signin_linked", "google", email)
         if picture and not user.get("avatar_url"):
             await db.users.update_one({"user_id": uid}, {"$set": {"avatar_url": picture}})
             user["avatar_url"] = picture
@@ -935,11 +1284,114 @@ async def _google_user(claims: dict) -> Optional[dict]:
             "onboarding_completed": False,
             "created_at": now_utc(),
             "deleted_at": None,
+            **_name_search_fields(name),
         }
-        await db.users.insert_one(user)
-    if sub:
-        await _link_identity(uid, "google", sub, email, True)
+        try:
+            await db.users.insert_one(user)
+        except DuplicateKeyError:
+            # A concurrent first sign-in with the same email created the account a moment ago: this one
+            # fails cleanly and the retry finds that account.
+            raise GoogleRefused("failed")
+        if sub:
+            await _link_identity(uid, "google", sub, email, True)
     return user
+
+
+# --- Native Google sign-in (Android Credential Manager) ------------------------------------------------
+# The app asks Android for a Google ID token for our web client (serverClientId = GOOGLE_CLIENT_ID) with a
+# nonce from /auth/google/nonce, and posts it here. Google issues such a token only to an app registered as
+# one of GOOGLE_ANDROID_CLIENT_IDS (package name + signing certificate) — so, unlike the browser flow's
+# bookloop:// return, no other app on the phone can obtain one — and the single-use nonce stops replays.
+# The account rules are the browser flow's (_google_user); linking needs no email match here.
+GOOGLE_NONCE_TTL = timedelta(minutes=10)
+GOOGLE_TOKEN_LEEWAY_S = 60
+
+
+@api.post("/auth/google/nonce")
+async def google_nonce():
+    """A single-use nonce for one native Google sign-in; Google puts it into the ID token as is."""
+    if not _google_native_configured():
+        raise HTTPException(status_code=503, detail="Native Google sign-in is not configured")
+    rec = {"id": secrets.token_urlsafe(16), "nonce": secrets.token_urlsafe(32), "created_at": now_utc()}
+    await db.google_nonces.insert_one(dict(rec))
+    return {"nonce_id": rec["id"], "nonce": rec["nonce"]}
+
+
+async def _google_native_claims(id_token: str, nonce_id: str) -> Optional[dict]:
+    """Verifies a Google ID token from the app: Google's signature, issuer, our web client as audience,
+    one of our Android clients as the authorized party, expiry, a verified email, and this server's
+    single-use nonce (consumed whatever the outcome)."""
+    import jwt
+    rec = await db.google_nonces.find_one_and_delete(
+        {"id": nonce_id, "created_at": _fresh_since(GOOGLE_NONCE_TTL)}) if nonce_id else None
+    if not rec:
+        return None
+    try:
+        kid = jwt.get_unverified_header(id_token).get("kid")
+        key = await _jwks_key(_google_keys, GOOGLE_CERTS_URL, kid) if kid else None
+        if key is None:
+            return None
+        # Leeway: Google's clock and ours differ by a few seconds, and PyJWT rejects an `iat` that is
+        # even one second ahead.
+        claims = jwt.decode(id_token, key, algorithms=["RS256"], audience=GOOGLE_CLIENT_ID,
+                            leeway=GOOGLE_TOKEN_LEEWAY_S, options={"require": ["exp", "iat", "sub", "aud", "iss"]})
+    except Exception as e:
+        logger.warning(f"Google ID token rejected: {e!r}")
+        return None
+    if claims.get("iss") not in GOOGLE_ISSUERS or claims.get("azp") not in GOOGLE_ANDROID_CLIENT_IDS:
+        return None
+    if not hmac.compare_digest(str(claims.get("nonce") or ""), rec["nonce"]):
+        return None
+    if not claims.get("email") or claims.get("email_verified") not in (True, "true"):
+        return None
+    return claims
+
+
+class GoogleNativeBody(BaseModel):
+    id_token: str = Field(max_length=5000)
+    nonce_id: str = Field(max_length=100)
+
+
+GOOGLE_REFUSALS = {
+    "link_required": "Sign in with your password, then link Google in Profile -> Account",
+    "account_mismatch": "This email's BookLoop account is linked to a different Google account",
+}
+
+
+@api.post("/auth/google/native")
+async def google_native_sign_in(body: GoogleNativeBody, request: Request):
+    if not _google_native_configured():
+        raise HTTPException(status_code=503, detail="Native Google sign-in is not configured")
+    claims = await _google_native_claims(body.id_token, body.nonce_id)
+    if not claims:
+        raise _coded(401, "google_failed", "Google sign-in could not be verified")
+    try:
+        user = await _google_user(claims)
+    except GoogleRefused as e:
+        if e.code in GOOGLE_REFUSALS:
+            raise _coded(409, e.code, GOOGLE_REFUSALS[e.code])
+        raise _coded(401, "google_failed", "Google sign-in could not be verified")
+    if not user:
+        raise _coded(401, "google_failed", "This account no longer exists")
+    user.pop("_id", None)
+    token = await create_session(user["user_id"])
+    await _record_client(user, request, "google_native")
+    return {"session_token": token, "user": public_user(user, private=True)}
+
+
+@api.post("/auth/google/native/link")
+async def google_native_link(body: GoogleNativeBody, user: dict = Depends(get_current_user)):
+    """Settings -> Account -> Link Google, natively: links the Google account in the token to the
+    signed-in account (any email: the token can only come from our own app)."""
+    if not _google_native_configured():
+        raise HTTPException(status_code=503, detail="Native Google sign-in is not configured")
+    claims = await _google_native_claims(body.id_token, body.nonce_id)
+    if not claims:
+        raise _coded(401, "google_failed", "Google sign-in could not be verified")
+    err = await _link_from_settings(user, "google", claims["sub"], claims["email"].lower(), True)
+    if err:
+        raise _coded(409, err, "This Google account can't be linked to this account")
+    return await account_identities(user)
 
 
 # --- Provider identities + account linking -----------------------------------------------------------
@@ -966,21 +1418,83 @@ async def _identity_user(provider: str, subject: str) -> Optional[dict]:
 async def _link_identity(user_id: str, provider: str, subject: str, email: Optional[str], email_verified: bool,
                          private_email: bool = False) -> Optional[str]:
     """Links the identity to the user. Returns an error code, or None when linked (or already was)."""
+    status = await _link_identity_status(user_id, provider, subject, email, email_verified, private_email)
+    return None if status in ("linked", "already") else status
+
+
+async def _link_identity_status(user_id: str, provider: str, subject: str, email: Optional[str],
+                                email_verified: bool, private_email: bool = False) -> str:
+    """"linked" (by this call), "already" (linked to this user before, or by a concurrent call), or an
+    error code: "identity_in_use" / "provider_already_linked"."""
     existing = await db.auth_identities.find_one({"provider": provider, "subject": subject}, {"_id": 0})
     if existing:
-        return None if existing["user_id"] == user_id else "identity_in_use"
-    if await db.auth_identities.find_one({"user_id": user_id, "provider": provider}, {"_id": 1}):
-        return "provider_already_linked"  # a different Google/Apple account is already linked
+        return "already" if existing["user_id"] == user_id else "identity_in_use"
+    mine = await db.auth_identities.find_one({"user_id": user_id, "provider": provider}, {"_id": 0, "subject": 1})
+    if mine:  # the same account linked by a concurrent call a moment ago, or a different one
+        return "already" if mine["subject"] == subject else "provider_already_linked"
     try:
         await db.auth_identities.insert_one({
             "provider": provider, "subject": subject, "user_id": user_id,
             "email": email, "email_verified": bool(email_verified), "private_email": private_email,
             "created_at": now_utc(), "last_login_at": now_utc(),
         })
-    except DuplicateKeyError:  # a concurrent link won the race
+    except DuplicateKeyError:
+        # A concurrent link won the race. The unique indexes ((provider, subject) and (user_id, provider))
+        # decided it; report which one this request lost on.
         again = await db.auth_identities.find_one({"provider": provider, "subject": subject}, {"_id": 0})
-        return None if again and again["user_id"] == user_id else "identity_in_use"
-    return None
+        if again:
+            return "already" if again["user_id"] == user_id else "identity_in_use"
+        return "provider_already_linked"
+    return "linked"
+
+
+async def _has_other_login(user: dict, provider: str) -> bool:
+    """Whether the account already had a way in besides `provider` (a password or another provider). Only
+    then is a sign-in that attaches `provider` by email news to its owner: an account without one was
+    created by a sign-in with this very identity (possibly a concurrent one, or before identities were
+    stored)."""
+    if user.get("password_hash"):
+        return True
+    return bool(await db.auth_identities.find_one({"user_id": user["user_id"], "provider": {"$ne": provider}}, {"_id": 1}))
+
+
+async def _link_from_settings(user: dict, provider: str, subject: str, email: Optional[str], email_verified: bool,
+                              private_email: bool = False) -> Optional[str]:
+    """Settings -> Account -> Link: _link_identity, plus a security notice when this call linked something new."""
+    status = await _link_identity_status(user["user_id"], provider, subject, email, email_verified, private_email)
+    if status == "linked":
+        await _security_notice(user, "linked", provider, email)
+    return None if status in ("linked", "already") else status
+
+
+# --- Security notices ----------------------------------------------------------------------------------
+# Every change to how an account signs in (a provider linked from Settings, linked automatically by a
+# first sign-in with a matching email, or unlinked) is recorded in security_events (kept 180 days, deleted
+# with the account) and emailed to the account's address, so a change the owner didn't make is noticed.
+SECURITY_EVENT_TTL = timedelta(days=180)
+SECURITY_EVENTS = ("linked", "signin_linked", "unlinked")
+
+
+async def _security_notice(user: dict, event: str, provider: str, provider_email: Optional[str]) -> None:
+    """Best-effort: never fails the request that triggered it."""
+    try:
+        await db.security_events.insert_one({"user_id": user["user_id"], "event": event, "provider": provider,
+                                             "provider_email": provider_email, "created_at": now_utc()})
+    except Exception as e:
+        logger.warning(f"security event not recorded: {e!r}")
+    to = user.get("email")
+    if to and not to.endswith("@deleted.invalid"):
+        _spawn(_send_security_email(to, user.get("name") or "", event, provider, provider_email))
+
+
+async def _send_security_email(to: str, name: str, event: str, provider: str, provider_email: Optional[str]) -> None:
+    subject, html, text = security_email_body(name, event, provider, provider_email)
+    try:
+        await get_email_provider().send(to=to, subject=subject, html=html, text=text)
+    except EmailNotConfiguredError:
+        logger.info(f"security email ({event}) not sent: no email provider configured")
+    except Exception as e:
+        logger.warning(f"security email ({event}) failed: {e!r}")
 
 
 def _apple_configured() -> bool:
@@ -994,20 +1508,25 @@ def _apple_configured() -> bool:
 
 
 _apple_keys: dict = {"at": 0.0, "keys": {}}
+_google_keys: dict = {"at": 0.0, "keys": {}}
+
+
+async def _jwks_key(cache: dict, url: str, kid: str):
+    """A provider's signing key by id, from its JWKS: cached for an hour, refetched early (at most once a
+    minute) when the provider starts signing with a key we haven't seen."""
+    import jwt
+    age = time.time() - cache["at"]
+    if age > 3600 or (kid not in cache["keys"] and age > 60):
+        async with httpx.AsyncClient(timeout=10) as hc:
+            resp = await hc.get(url)
+        resp.raise_for_status()
+        cache["keys"] = {k["kid"]: jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(k)) for k in resp.json()["keys"]}
+        cache["at"] = time.time()
+    return cache["keys"].get(kid)
 
 
 async def _apple_public_key(kid: str):
-    """Apple's signing key by id, from its JWKS: cached for an hour, refetched early (at most once a
-    minute) when Apple starts signing with a key we haven't seen."""
-    import jwt
-    age = time.time() - _apple_keys["at"]
-    if age > 3600 or (kid not in _apple_keys["keys"] and age > 60):
-        async with httpx.AsyncClient(timeout=10) as hc:
-            resp = await hc.get(APPLE_KEYS_URL)
-        resp.raise_for_status()
-        _apple_keys["keys"] = {k["kid"]: jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(k)) for k in resp.json()["keys"]}
-        _apple_keys["at"] = time.time()
-    return _apple_keys["keys"].get(kid)
+    return await _jwks_key(_apple_keys, APPLE_KEYS_URL, kid)
 
 
 async def _apple_claims(identity_token: str, nonce_id: str) -> Optional[dict]:
@@ -1073,12 +1592,13 @@ async def apple_sign_in(body: AppleAuthBody):
     if user == {}:
         raise _coded(401, "apple_failed", "This account no longer exists")
     email, verified, private = _apple_email(claims)
+    matched_by_email = False
     if user is None and email and verified and not private:
         # Same rule as Google: an Apple-verified email finds the existing account with that email.
         found = await db.users.find_one({"email": email}, {"_id": 0})
         if found and found.get("deleted_at"):
             raise _coded(401, "apple_failed", "This account no longer exists")
-        user = found
+        user, matched_by_email = found, found is not None
     if user is None:
         if not email or not verified:
             # Apple omits the email only when this Apple ID authorized BookLoop before; without it no
@@ -1091,9 +1611,12 @@ async def apple_sign_in(body: AppleAuthBody):
         except DuplicateKeyError:
             raise _coded(409, "apple_failed", "Could not create the account — please try again")
         user.pop("_id", None)
-    err = await _link_identity(user["user_id"], "apple", sub, email, verified, private)
-    if err:
-        raise _coded(409, err, "This Apple ID can't be used with this account")
+    had_other_login = matched_by_email and await _has_other_login(user, "apple")
+    status = await _link_identity_status(user["user_id"], "apple", sub, email, verified, private)
+    if status not in ("linked", "already"):
+        raise _coded(409, status, "This Apple ID can't be used with this account")
+    if had_other_login and status == "linked":
+        await _security_notice(user, "signin_linked", "apple", email)
     token = await create_session(user["user_id"])
     return {"session_token": token, "user": public_user(user, private=True)}
 
@@ -1107,7 +1630,7 @@ async def apple_link(body: AppleAuthBody, user: dict = Depends(get_current_user)
     if not claims:
         raise _coded(401, "apple_failed", "Sign in with Apple could not be verified")
     email, verified, private = _apple_email(claims)
-    err = await _link_identity(user["user_id"], "apple", claims["sub"], email, verified, private)
+    err = await _link_from_settings(user, "apple", claims["sub"], email, verified, private)
     if err:
         raise _coded(409, err, "This Apple ID can't be linked to this account")
     return await account_identities(user)
@@ -1134,18 +1657,20 @@ async def unlink_identity(provider: str, user: dict = Depends(get_current_user))
     """Unlinks a provider from the signed-in account — never its last way to sign in."""
     if provider not in AUTH_PROVIDERS:
         raise HTTPException(status_code=404, detail="Not found")
-    ident = await db.auth_identities.find_one({"user_id": user["user_id"], "provider": provider}, {"_id": 1})
+    ident = await db.auth_identities.find_one({"user_id": user["user_id"], "provider": provider}, {"_id": 1, "email": 1})
     if not ident:
         raise HTTPException(status_code=404, detail="Not linked")
     others = await db.auth_identities.count_documents({"user_id": user["user_id"], "provider": {"$ne": provider}})
     if not user.get("password_hash") and others == 0:
         raise _coded(409, "last_login_method", "This is your only way to sign in — it can't be removed")
-    await db.auth_identities.delete_one({"_id": ident["_id"]})
+    if (await db.auth_identities.delete_one({"_id": ident["_id"]})).deleted_count:
+        await _security_notice(user, "unlinked", provider, ident.get("email"))
     return await account_identities(user)
 
 
 @api.get("/auth/me")
-async def me(user: dict = Depends(get_current_user)):
+async def me(request: Request, user: dict = Depends(get_current_user)):
+    await _record_client(user, request)
     return {"user": public_user(user, private=True)}
 
 
@@ -1165,6 +1690,12 @@ async def update_me(body: ProfileUpdate, user: dict = Depends(get_current_user))
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if "preferred_language" in updates and updates["preferred_language"] not in SUPPORTED_LANGUAGES:
         raise HTTPException(status_code=400, detail="Unsupported language")
+    if "avatar_url" in updates:
+        updates["avatar_url"] = checked_image_url(updates["avatar_url"], user["user_id"], user.get("avatar_url"))
+    if "name" in updates:
+        if not updates["name"].strip():
+            raise HTTPException(status_code=400, detail="Name cannot be empty")
+        updates.update(_name_search_fields(updates["name"]))
     if updates:
         await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
     fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
@@ -1179,15 +1710,16 @@ def _clean_place(v: Optional[str]) -> Optional[str]:
 @api.put("/users/me/location")
 async def update_my_location(body: LocationUpdate, user: dict = Depends(get_current_user)):
     """The only way a user's location changes: the app sends the device position after the user
-    granted location permission. Coordinates are stored at ~11 m precision (4 decimals) and are never
-    returned to other users — they only ever see an area name and a distance."""
+    granted location permission. Coordinates are stored at ~110 m precision (3 decimals) and are never
+    returned to other users — they only ever see an area name and a coarse distance."""
+    await _rate_limit(f"location:{user['user_id']}", 30, timedelta(hours=1))
     neighborhood = _clean_place(body.neighborhood)
     city = _clean_place(body.city)
     if neighborhood and city and neighborhood.casefold() == city.casefold():
         neighborhood = None  # the geocoder echoed the city: don't show "Tashkent, Tashkent"
     updates = {
-        "lat": round(body.lat, 4),
-        "lng": round(body.lng, 4),
+        "lat": round(body.lat, LOCATION_STORE_DECIMALS),
+        "lng": round(body.lng, LOCATION_STORE_DECIMALS),
         "city": city,
         "neighborhood": neighborhood,
         "country": _clean_place(body.country),
@@ -1240,7 +1772,7 @@ async def public_reviews(ratings: List[dict]) -> List[dict]:
 @api.get("/users/{user_id}")
 async def get_user(user_id: str, user: dict = Depends(get_current_user)):
     u = await db.users.find_one({"user_id": user_id, "deleted_at": None}, {"_id": 0})
-    if not u:
+    if not u or await _is_blocked_pair(user["user_id"], user_id):
         raise HTTPException(status_code=404, detail="User not found")
     ratings = await public_reviews(
         await db.ratings.find({"ratee_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
@@ -1251,6 +1783,247 @@ async def get_user(user_id: str, user: dict = Depends(get_current_user)):
     pu.update(match_info(user, u, {b["genre"] for b in books if b["status"] == "Available"}))
     pu["is_favorite"] = bool(await db.favorites.find_one({"user_id": user["user_id"], "target_id": user_id}, {"_id": 1}))
     return {"user": pu, "books": books, "reviews": ratings}
+
+
+# ----------------------------------------------------------------------------
+# Text search (see search_text.py) — books by title/author/aliases, readers by name
+# ----------------------------------------------------------------------------
+def _name_search_fields(name: Optional[str]) -> dict:
+    """Search representation of a reader's name (users.search_tokens / search_v)."""
+    return {"search_tokens": search_text.index_tokens([name]), "search_v": search_text.SEARCH_VERSION}
+
+
+TEXT_SEARCH_CANDIDATE_LIMIT = 3000
+
+
+async def _ranked_matches(coll, base_q: dict, search: str, slim: dict, legacy_fields: List[str],
+                          score, sort_newest: bool = True) -> Optional[List[tuple]]:
+    """[(score, _id)] of the documents allowed by `base_q` whose text matches `search`, best first
+    (ties newest first when `sort_newest`). None when the query has nothing searchable in it.
+
+    `base_q` is the caller's eligibility filter and is always ANDed in: text matching only narrows
+    and ranks. Candidates come from anchored-prefix lookups on the indexed `search_tokens`, plus a
+    plain-text branch for documents the backfill has not reached yet; when that finds nothing, a
+    second pass looks words up by their ending (a typo in the first letters, e.g. "Fostoevsky")."""
+    prefixes = search_text.candidate_prefixes(search)
+    if not prefixes:
+        return None
+    raw = re.escape(search.strip())
+    legacy = {"search_v": {"$exists": False}, "$or": [{f: {"$regex": raw, "$options": "i"}} for f in legacy_fields]}
+    passes = [
+        [{"search_tokens": {"$regex": "^" + re.escape(p)}} for p in prefixes] + [legacy],
+        [{"search_tokens": {"$regex": "^" + re.escape(p)}} for p in search_text.reverse_prefixes(search)],
+    ]
+    for ors in passes:
+        if not ors:
+            continue
+        cursor = coll.find({"$and": [base_q, {"$or": ors}]}, slim)
+        if sort_newest:
+            cursor = cursor.sort("created_at", -1)
+        scored = [(score(d), d["_id"]) for d in await cursor.to_list(TEXT_SEARCH_CANDIDATE_LIMIT)]
+        hits = sorted((sd for sd in scored if sd[0] > 0), key=lambda sd: -sd[0])  # stable: ties keep order
+        if hits:
+            return hits
+    return []
+
+
+# ----------------------------------------------------------------------------
+# Book search representation (see search_text.py)
+# ----------------------------------------------------------------------------
+# Stored on each book next to the untouched title/author:
+#   search_tokens  normalized words + cross-script keys of title, author and aliases (indexed)
+#   search_v       search_text.SEARCH_VERSION the tokens were built with
+#   aliases        [{kind: "title"|"author", value, source: "openlibrary", ref: work key, lang?}] -
+#                  only from verified metadata, never generated; user-entered values stay in title/author
+#   aliases_status "pending" | "done" | "none" (no verified match) | "error" (retried later)
+def _search_fields(book: dict) -> dict:
+    texts = [book.get("title"), book.get("author"), *(a.get("value") for a in book.get("aliases") or [])]
+    return {"search_tokens": search_text.index_tokens(texts), "search_v": search_text.SEARCH_VERSION}
+
+
+# Alias lookups (background only; never on a search request). Two sources, both verified:
+#   OpenLibrary — the work behind the ISBN/title: original title, edition titles, author spellings
+#   Wikidata    — the work's curated title in each BookLoop language, its authors' names
+# Every response is cached in `metadata_cache` (30 days), so popular books are looked up once.
+METADATA_ENRICH = (os.environ.get("METADATA_ENRICH") or "1").strip().lower() not in ("0", "false", "no")
+# Wikimedia rejects requests without contact details in the User-Agent; Wikidata is used only when
+# METADATA_CONTACT (an email or URL for the operators of this server) is configured.
+METADATA_CONTACT = (os.environ.get("METADATA_CONTACT") or "").strip()
+WIKIDATA_URL = os.environ.get("WIKIDATA_URL") or "https://www.wikidata.org/w/api.php"
+METADATA_SPACING_S = float(os.environ.get("METADATA_SPACING_S") or 0.5)
+METADATA_CACHE_TTL = timedelta(days=30)
+MAX_ALIASES = 80
+ALIAS_RETRY_AFTER = timedelta(days=1)
+_meta_gates: dict = {}  # one request at a time per host, spaced out (polite + rate-safe)
+_bg_tasks: set = set()
+
+
+def _spawn(coro) -> None:
+    """Fire-and-forget task, kept referenced until it finishes."""
+    t = asyncio.create_task(coro)
+    _bg_tasks.add(t)
+    t.add_done_callback(_bg_tasks.discard)
+
+
+def _metadata_user_agent() -> str:
+    return f"BookLoop/1.0 (book search metadata; contact: {METADATA_CONTACT})" if METADATA_CONTACT else "BookLoop/1.0"
+
+
+async def _meta_get(url: str, params: dict, shrink=None) -> dict:
+    """GET a metadata JSON document through the cache. `shrink` trims a response to what BookLoop
+    uses before it is cached (edition lists and Wikidata entities are large)."""
+    key = hashlib.sha1(f"{url}?{urlencode(sorted(params.items()))}".encode()).hexdigest()
+    hit = await db.metadata_cache.find_one({"key": key}, {"_id": 0, "data": 1})
+    if hit:
+        return hit["data"]
+    gate = _meta_gates.setdefault(urlparse(url).netloc, asyncio.Semaphore(1))
+    async with gate:
+        try:
+            async with httpx.AsyncClient(timeout=15) as hc:
+                resp = await hc.get(url, params=params, headers={"User-Agent": _metadata_user_agent()})
+            resp.raise_for_status()
+            data = resp.json()
+        finally:
+            await asyncio.sleep(METADATA_SPACING_S)
+    if shrink:
+        data = shrink(data)
+    await db.metadata_cache.update_one({"key": key}, {"$set": {"data": data, "fetched_at": now_utc()}}, upsert=True)
+    return data
+
+
+def _shrink_editions(data: dict) -> dict:
+    return {"entries": [{"title": e.get("title"), "languages": e.get("languages") or []} for e in data.get("entries") or []]}
+
+
+def _shrink_entities(data: dict) -> dict:
+    out = {}
+    for qid, e in (data.get("entities") or {}).items():
+        out[qid] = {"id": e.get("id") or qid, "labels": e.get("labels") or {}, "aliases": e.get("aliases") or {},
+                    "claims": {"P50": (e.get("claims") or {}).get("P50") or []}}
+    return {"entities": out}
+
+
+async def _openlibrary_aliases(book: dict) -> list:
+    """Aliases from the OpenLibrary work this book is verified to be: by ISBN (an exact edition), or
+    by title+author, where the stored title/author must equal the work's (search_text.same_work).
+    Returns [] when no work is verified; raises on network errors so the book is retried later."""
+    fields = "key,title,author_name,author_alternative_name"
+    isbn = re.sub(r"[^0-9Xx]", "", book.get("isbn") or "")
+    if isbn:
+        params = {"isbn": isbn, "fields": fields, "limit": 1}
+    else:
+        params = {"title": book.get("title") or "", "fields": fields, "limit": 3}
+        if (book.get("author") or "").strip():
+            params["author"] = book["author"]
+    docs = (await _meta_get(f"{OPENLIBRARY_URL}/search.json", params)).get("docs") or []
+    for doc in docs:
+        key = doc.get("key") or ""
+        if not key.startswith("/works/"):
+            continue
+        editions = (await _meta_get(f"{OPENLIBRARY_URL}{key}/editions.json", {"limit": 500}, _shrink_editions)).get("entries") or []
+        title, author = book.get("title") or "", book.get("author") or ""
+        if isbn or search_text.same_work(title, author, doc, [e.get("title") or "" for e in editions]):
+            return search_text.aliases_from_openlibrary(title, author, doc, editions)
+    return []
+
+
+async def _wikidata_entities(ids: List[str], claims: bool) -> List[dict]:
+    out = []
+    for i in range(0, len(ids), 50):  # wbgetentities takes up to 50 ids
+        data = await _meta_get(WIKIDATA_URL, {
+            "action": "wbgetentities", "ids": "|".join(ids[i:i + 50]), "format": "json",
+            "props": "labels|aliases" + ("|claims" if claims else ""), "languages": "|".join(search_text.WIKIDATA_LANGS),
+        }, _shrink_entities)
+        out += list((data.get("entities") or {}).values())
+    return out
+
+
+async def _wikidata_aliases(book: dict) -> list:
+    """Per-language titles and author names from the Wikidata item this book is verified to be
+    (search_text.wikidata_match). [] when Wikidata is not configured or nothing is verified."""
+    if not METADATA_CONTACT:
+        return []
+    title, author = book.get("title") or "", book.get("author") or ""
+    if not search_text.normalize(title):
+        return []
+    lang = search_text.BOOK_LANGUAGE_CODES.get(book.get("language") or "", "en")
+    ids: List[str] = []
+    for code in dict.fromkeys([lang, "en"]):
+        r = await _meta_get(WIKIDATA_URL, {"action": "wbsearchentities", "search": title, "language": code,
+                                            "type": "item", "limit": 7, "format": "json"})
+        ids += [x["id"] for x in r.get("search") or [] if x.get("id") and x["id"] not in ids]
+    if not ids:
+        return []
+    works = await _wikidata_entities(ids, claims=True)
+    author_ids = sorted({a for w in works for a in search_text.wikidata_author_ids(w)})
+    authors = {e["id"]: e for e in await _wikidata_entities(author_ids, claims=False)} if author_ids else {}
+    work = search_text.wikidata_match(title, author, works, authors)
+    return search_text.aliases_from_wikidata(title, author, work, authors) if work else []
+
+
+async def _enrich_book(book_id: str) -> None:
+    """Fetch and store a book's metadata aliases, then rebuild its search tokens. Writes only if the
+    title/author/isbn are unchanged since the fetch started (an edit meanwhile re-queues the book).
+    A source that fails marks the book "error" (retried later) but keeps what the other one found."""
+    if not METADATA_ENRICH:
+        return
+    book = await db.books.find_one({"id": book_id, "deleted_at": None}, {"_id": 0})
+    if not book:
+        return
+    same = {"id": book_id, "title": book.get("title"), "author": book.get("author"), "isbn": book.get("isbn")}
+    results = await asyncio.gather(_wikidata_aliases(book), _openlibrary_aliases(book), return_exceptions=True)
+    failed = [r for r in results if isinstance(r, Exception)]
+    for r in failed:
+        logger.info(f"alias lookup failed for {book_id}: {r!r}")
+    # Wikidata first: its per-language labels are the curated titles; OpenLibrary fills in the rest.
+    merged = search_text.merge_aliases(*(r for r in results if not isinstance(r, Exception)))
+    aliases = sorted(merged, key=lambda a: a["kind"] != "title")[:MAX_ALIASES]
+    book["aliases"] = aliases
+    status = "error" if failed else "done" if aliases else "none"
+    await db.books.update_one(same, {"$set": {
+        "aliases": aliases, "aliases_status": status, "aliases_checked_at": now_utc(), **_search_fields(book),
+    }})
+
+
+async def backfill_search_tokens() -> int:
+    """Give every book (and every reader's name) the current search representation (local work
+    only, no network). Idempotent and versioned: run at each startup, it touches only documents
+    whose search_v is missing/outdated."""
+    done = 0
+    stale = {"search_v": {"$ne": search_text.SEARCH_VERSION}}
+    jobs = (
+        (db.books, {"_id": 1, "title": 1, "author": 1, "aliases": 1}, _search_fields),
+        (db.users, {"_id": 1, "name": 1}, lambda u: _name_search_fields(u.get("name"))),
+    )
+    for coll, fields, build in jobs:
+        while True:
+            batch = await coll.find(stale, fields).to_list(500)
+            if not batch:
+                break
+            # By _id: always indexed, so a batch costs 500 point updates rather than 500 collection scans.
+            await coll.bulk_write([UpdateOne({"_id": d["_id"]}, {"$set": build(d)}) for d in batch], ordered=False)
+            done += len(batch)
+    return done
+
+
+async def backfill_aliases() -> None:
+    """Slowly look up aliases for books that never had them (existing books, failed lookups), one
+    OpenLibrary request at a time. Runs in the background; search works meanwhile, just without them."""
+    while METADATA_ENRICH:
+        due = {"deleted_at": None, "$or": [
+            {"aliases_status": {"$exists": False}},
+            {"aliases_status": "pending", "aliases_checked_at": {"$exists": False}},
+            {"aliases_status": "error", "aliases_checked_at": {"$lt": now_utc() - ALIAS_RETRY_AFTER}},
+        ]}
+        batch = await db.books.find(due, {"_id": 0, "id": 1}).sort("created_at", -1).to_list(50)
+        if not batch:
+            return
+        for b in batch:
+            await _enrich_book(b["id"])
+            # A lookup that could not be stored (book edited meanwhile) must not be picked again forever;
+            # the edit already queued its own lookup.
+            await db.books.update_one({"id": b["id"], "aliases_checked_at": {"$exists": False}},
+                                      {"$set": {"aliases_status": "pending", "aliases_checked_at": now_utc()}})
 
 
 # ----------------------------------------------------------------------------
@@ -1267,12 +2040,14 @@ async def my_books(status: Optional[str] = None, user: dict = Depends(get_curren
 
 @api.post("/books")
 async def add_book(body: BookBody, user: dict = Depends(get_current_user)):
+    if not body.title.strip():
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
     book = {
         "id": new_id("book"),
         "owner_id": user["user_id"],
         "title": body.title,
         "author": body.author,
-        "cover_url": body.cover_url,
+        "cover_url": checked_image_url(body.cover_url, user["user_id"], allow_covers=True),
         "condition": body.condition,
         "language": body.language,
         "genre": body.genre,
@@ -1280,8 +2055,12 @@ async def add_book(body: BookBody, user: dict = Depends(get_current_user)):
         "status": body.status if body.status in ("Available", "Reserved", "Swapped") else "Available",
         "created_at": now_utc(),
         "deleted_at": None,
+        "aliases": [],
+        "aliases_status": "pending",
     }
+    book.update(_search_fields(book))
     await db.books.insert_one(book)
+    _spawn(_enrich_book(book["id"]))
     return {"book": clean_book(book)}
 
 
@@ -1310,6 +2089,8 @@ async def update_book(book_id: str, body: BookUpdate, user: dict = Depends(get_c
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None or k == "cover_url"}
     if "title" in updates and not updates["title"].strip():
         raise HTTPException(status_code=400, detail="Title cannot be empty")
+    if "cover_url" in updates:
+        updates["cover_url"] = checked_image_url(updates["cover_url"], user["user_id"], book.get("cover_url"), allow_covers=True)
     if "status" in updates:
         if updates["status"] not in BOOK_STATUSES:
             raise HTTPException(status_code=400, detail="Invalid status")
@@ -1317,8 +2098,15 @@ async def update_book(book_id: str, body: BookUpdate, user: dict = Depends(get_c
             updates.pop("status")
         elif await _book_in_active_swap(book_id):
             raise HTTPException(status_code=409, detail="This book is part of an active swap; cancel the swap first")
+    identity_changed = any(k in updates and updates[k] != book.get(k) for k in ("title", "author", "isbn"))
+    if identity_changed:
+        # Aliases belonged to the old title/author/isbn: drop them, re-index, look them up again.
+        updates.update({"aliases": [], "aliases_status": "pending"})
+        updates.update(_search_fields({**book, **updates}))
     if updates:
         await db.books.update_one({"id": book_id}, {"$set": updates})
+    if identity_changed:
+        _spawn(_enrich_book(book_id))
     fresh = await db.books.find_one({"id": book_id}, {"_id": 0})
     return {"book": clean_book(fresh)}
 
@@ -1327,6 +2115,8 @@ async def update_book(book_id: str, body: BookUpdate, user: dict = Depends(get_c
 async def get_book(book_id: str, user: dict = Depends(get_current_user)):
     b = await db.books.find_one({"id": book_id, "deleted_at": None}, {"_id": 0})
     if not b:
+        raise HTTPException(status_code=404, detail="Book not found")
+    if await _is_blocked_pair(user["user_id"], b["owner_id"]):
         raise HTTPException(status_code=404, detail="Book not found")
     owner = await db.users.find_one({"user_id": b["owner_id"], "deleted_at": None}, {"_id": 0})
     ownerp = public_user(owner) if owner else {}
@@ -1382,6 +2172,9 @@ async def books_demand(user: dict = Depends(get_current_user)):
     return await _demand_for_books(user, books)
 
 
+# OPENLIBRARY_URL exists so tests can point the backend at a fake OpenLibrary.
+OPENLIBRARY_URL = (os.environ.get("OPENLIBRARY_URL") or "https://openlibrary.org").rstrip("/")
+
 LANG_CODE_MAP = {
     "eng": "English", "ita": "Italian", "spa": "Spanish", "fre": "French",
     "fra": "French", "ger": "German", "deu": "German", "ara": "Arabic", "por": "Portuguese",
@@ -1401,14 +2194,37 @@ def _ol_cover(cover_i, isbn_list):
 async def book_search(q: str, user: dict = Depends(get_current_user)):
     if not q or len(q.strip()) < 2:
         return {"results": []}
-    url = "https://openlibrary.org/search.json"
-    params = {"q": q, "limit": 20, "fields": "title,author_name,isbn,cover_i,language"}
-    try:
-        async with httpx.AsyncClient(timeout=12) as hc:
-            resp = await hc.get(url, params=params, headers={"User-Agent": "BookLoop/1.0"})
-        docs = resp.json().get("docs", []) if resp.status_code == 200 else []
-    except Exception:
-        docs = []
+    url = f"{OPENLIBRARY_URL}/search.json"
+    # OpenLibrary indexes many Latin spellings of names but finds little for a Cyrillic query, so a
+    # Cyrillic query is also sent in Latin transliteration and the two result lists are merged.
+    queries = [q]
+    latin = search_text.transliterate(q)
+    if latin and latin != search_text.normalize(q):
+        queries.append(latin)
+
+    async def fetch(query):
+        params = {"q": query, "limit": 20, "fields": "title,author_name,author_alternative_name,isbn,cover_i,language"}
+        try:
+            async with httpx.AsyncClient(timeout=12) as hc:
+                resp = await hc.get(url, params=params, headers={"User-Agent": "BookLoop/1.0"})
+            return resp.json().get("docs", []) if resp.status_code == 200 else []
+        except Exception:
+            return []
+
+    seen, docs = set(), []
+    for d in [d for batch in await asyncio.gather(*map(fetch, queries)) for d in batch]:
+        k = (search_text.normalize(d.get("title")), search_text.normalize(", ".join(d.get("author_name") or [])))
+        if k not in seen:
+            seen.add(k)
+            docs.append(d)
+
+    def relevance(d):
+        names = (d.get("author_name") or []) + (d.get("author_alternative_name") or [])
+        return search_text.score_book(q, {"title": d.get("title"), "author": "", "aliases": [{"value": n} for n in names]})
+
+    # Our own matching first (any script/transliteration); OpenLibrary's order breaks ties and keeps
+    # results it matched on fields we do not see (subjects, descriptions…).
+    docs = sorted(docs, key=lambda d: -relevance(d))[:20]
     results = []
     for d in docs:
         isbns = d.get("isbn") or []
@@ -1425,7 +2241,7 @@ async def book_search(q: str, user: dict = Depends(get_current_user)):
 
 @api.get("/books/isbn/{isbn}")
 async def book_isbn(isbn: str, user: dict = Depends(get_current_user)):
-    url = "https://openlibrary.org/search.json"
+    url = f"{OPENLIBRARY_URL}/search.json"
     try:
         async with httpx.AsyncClient(timeout=12) as hc:
             resp = await hc.get(url, params={"isbn": isbn, "fields": "title,author_name,isbn,cover_i,language"}, headers={"User-Agent": "BookLoop/1.0"})
@@ -1448,13 +2264,12 @@ async def book_isbn(isbn: str, user: dict = Depends(get_current_user)):
 
 @api.delete("/books/{book_id}")
 async def delete_book(book_id: str, user: dict = Depends(get_current_user)):
+    # Ownership first: for anyone else's book the answer is always 404, never whether it is in a swap.
+    if not await db.books.find_one({"id": book_id, "owner_id": user["user_id"]}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Book not found")
     if await _book_in_active_swap(book_id):
         raise HTTPException(status_code=409, detail="This book is part of an active swap; cancel the swap first")
-    res = await db.books.update_one(
-        {"id": book_id, "owner_id": user["user_id"]}, {"$set": {"deleted_at": now_utc()}}
-    )
-    if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Book not found")
+    await db.books.update_one({"id": book_id, "owner_id": user["user_id"]}, {"$set": {"deleted_at": now_utc()}})
     return {"ok": True}
 
 
@@ -1463,6 +2278,22 @@ async def delete_book(book_id: str, user: dict = Depends(get_current_user)):
 # ----------------------------------------------------------------------------
 DISCOVER_CANDIDATE_LIMIT = 5000
 DISCOVER_RESULT_LIMIT = 200
+# `max_distance=all` (or leaving max_distance out) means no distance limit at all. It is a distinct
+# state, not a large number, so an "All" filter can never be confused with a real radius.
+MAX_DISTANCE_ALL = "all"
+
+
+def _parse_max_distance(raw: Optional[str]) -> Optional[float]:
+    """None = no distance limit (absent, empty, or "all"); otherwise a finite, non-negative km radius."""
+    if raw is None or raw.strip() == "" or raw.strip().casefold() == MAX_DISTANCE_ALL:
+        return None
+    try:
+        km = float(raw)
+    except ValueError:
+        km = float("nan")
+    if not math.isfinite(km) or km < 0:
+        raise HTTPException(status_code=422, detail="max_distance must be a non-negative number of km or 'all'")
+    return km
 
 
 @api.get("/discover/people")
@@ -1471,25 +2302,48 @@ async def discover_people(
     genre: Optional[str] = None,
     language: Optional[str] = None,
     exchanging: bool = False,
-    max_distance: Optional[float] = None,
+    max_distance: Optional[str] = None,
+    cluster: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
-    q = {"deleted_at": None, "user_id": {"$ne": user["user_id"]}}
+    """`cluster` (an id from GET /map/clusters) scopes results to the readers of that map area. The
+    reader chose the area explicitly, so the distance filter does not apply to it: an area 2,000 km
+    away still lists its readers. Every other filter and eligibility rule applies as usual."""
+    radius = None if cluster else _parse_max_distance(max_distance)
+    q = {"deleted_at": None, "user_id": {"$nin": [user["user_id"], *await _blocked_ids(user["user_id"])]}}
     if exchanging:
         q["is_exchanging"] = True
     if genre and genre != "All":
         q["genres"] = genre
     if language and language != "All":
         q["languages"] = language
-    if search:
-        q["name"] = {"$regex": re.escape(search), "$options": "i"}
+    if cluster:
+        # Narrow to the area in the query itself, so the candidate cap below can never drop its readers.
+        areas = await _cluster_area_filters(cluster)
+        if not areas:
+            return {"people": [], "top_matches": []}
+        q["$or"] = areas
+    text_score: dict = {}
+    if search and search.strip():
+        # Names match like book titles: any script, transliteration variants, typos (search_text).
+        ranked = await _ranked_matches(
+            db.users, q, search, {"_id": 1, "name": 1}, ["name"],
+            lambda u: search_text.score_book(search, {"title": u.get("name")}), sort_newest=False,
+        )
+        if not ranked:
+            return {"people": [], "top_matches": []}
+        text_score = {oid: sc for sc, oid in ranked}
+        q = {**q, "_id": {"$in": list(text_score)}}
     # Filter by distance and rank over ALL matching readers before truncating; capping the query
     # first returned an arbitrary 200 and could drop the nearest readers entirely.
-    people = await db.users.find(q, {"_id": 0}).to_list(DISCOVER_CANDIDATE_LIMIT)
+    people = await db.users.find(q).to_list(DISCOVER_CANDIDATE_LIMIT)
     candidates = []
     for p in people:
+        p["_text_score"] = text_score.get(p.pop("_id"), 0)
+        if cluster and _cluster_id_of(p) != cluster:
+            continue
         dist = user_distance_km(user, p)
-        if max_distance is not None and dist > max_distance and dist != UNKNOWN_DISTANCE_KM:
+        if radius is not None and dist > radius and dist != UNKNOWN_DISTANCE_KM:
             continue
         candidates.append((p, dist))
     shelves: dict = {}
@@ -1512,9 +2366,10 @@ async def discover_people(
         pu["books"] = shelves.get(p["user_id"], [])[:6]
         pu["available_count"] = len(pu["books"])
         pu.update(match_info(user, p, {b["genre"] for b in pu["books"]}))
-        result.append(pu)
-    # Genre matches first, then closest.
-    result.sort(key=lambda x: (-x["match_score"], x["distance_km"]))
+        result.append((p["_text_score"], pu))
+    # Best name match first (when searching), then genre matches, then closest.
+    result.sort(key=lambda x: (-x[0], -x[1]["match_score"], x[1]["distance_km"]))
+    result = [pu for _, pu in result]
     result = result[:DISCOVER_RESULT_LIMIT]
     top_matches = [p for p in result if p["match_score"] > 0][:6]
     return {"people": result, "top_matches": top_matches}
@@ -1527,21 +2382,35 @@ async def discover_books(
     language: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
-    q = {"deleted_at": None, "status": "Available", "owner_id": {"$ne": user["user_id"]}}
+    q = {"deleted_at": None, "status": "Available", "owner_id": {"$nin": [user["user_id"], *await _blocked_ids(user["user_id"])]}}
     if genre and genre != "All":
         q["genre"] = genre
     if language and language != "All":
         q["language"] = language
-    if search:
-        pattern = re.escape(search)
-        q["$or"] = [
-            {"title": {"$regex": pattern, "$options": "i"}},
-            {"author": {"$regex": pattern, "$options": "i"}},
-        ]
-    books = await db.books.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # `q` above is the eligibility filter and stays exactly as without a search; the text match only
+    # narrows and ranks what that filter already allows.
+    if search and search.strip():
+        ranked = await _ranked_matches(
+            db.books, q, search, {"_id": 1, "title": 1, "author": 1, "aliases.value": 1}, ["title", "author"],
+            lambda b: search_text.score_book(search, b),
+        )
+        if not ranked:  # no match, or nothing searchable left (e.g. only punctuation)
+            return {"books": []}
+        # Full documents only for the top results (by the indexed _id, re-applying the same filter).
+        top = [oid for _, oid in ranked][:200]
+        full = {b["_id"]: b for b in await db.books.find({**q, "_id": {"$in": top}}).to_list(None)}
+        books = [full[oid] for oid in top if oid in full]
+        for b in books:
+            b.pop("_id", None)
+    else:
+        books = await db.books.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    owners = {
+        u["user_id"]: u
+        for u in await db.users.find({"user_id": {"$in": list({b["owner_id"] for b in books})}}, {"_id": 0}).to_list(None)
+    }
     out = []
     for b in books:
-        owner = await db.users.find_one({"user_id": b["owner_id"]}, {"_id": 0})
+        owner = owners.get(b["owner_id"])
         cb = clean_book(b)
         cb["owner_name"] = owner.get("name") if owner else ""
         cb["owner_avatar"] = owner.get("avatar_url") if owner else None
@@ -1558,7 +2427,11 @@ GENRE_LIST = ["Fiction", "Psychology", "Business", "History", "Biography", "Self
 # nearby books & readers. No exact-title matching in V1.
 # ----------------------------------------------------------------------------
 @api.get("/wishlist")
-async def wishlist(max_distance: float = 25.0, user: dict = Depends(get_current_user)):
+async def wishlist(
+    # Bounded to distances that exist on Earth (≈ half its circumference): no NaN, infinity or negative radius.
+    max_distance: float = Query(25.0, ge=0, le=20_040),
+    user: dict = Depends(get_current_user),
+):
     my_genres = set(user.get("genres") or [])
     my_langs = set(user.get("languages") or [])
     prefs = {
@@ -1570,7 +2443,9 @@ async def wishlist(max_distance: float = 25.0, user: dict = Depends(get_current_
     if not my_genres:
         return {"preferences": prefs, "books": [], "people": [], "needs_setup": True}
 
-    others = await db.users.find({"deleted_at": None, "user_id": {"$ne": user["user_id"]}}, {"_id": 0}).to_list(500)
+    others = await db.users.find(
+        {"deleted_at": None, "user_id": {"$nin": [user["user_id"], *await _blocked_ids(user["user_id"])]}}, {"_id": 0}
+    ).to_list(500)
     owners: dict = {}
     for o in others:
         dist = user_distance_km(user, o)
@@ -1631,20 +2506,60 @@ NEIGHBORHOODS = {
 CLUSTER_CENTER_DECIMALS = 2
 
 
+def _area_of(p: dict) -> Optional[tuple]:
+    """(city, label) of the area a reader's place names put them in — neighborhood, else city."""
+    city = p.get("city") or ""
+    label = p.get("neighborhood") or city
+    return (city, label) if label else None
+
+
+def _cluster_area(p: dict) -> Optional[tuple]:
+    """The map area a reader belongs to, or None when they have no real location or no area name
+    and so are not on the map."""
+    return _area_of(p) if has_location(p) else None
+
+
+def _cluster_id(city: Optional[str], label: str) -> str:
+    # `city or None` keeps ids identical to earlier releases, which hashed a missing city as "None".
+    return hashlib.sha1(f"{city or None}|{label}".casefold().encode()).hexdigest()[:12]
+
+
+async def _cluster_area_filters(cluster_id: str) -> List[dict]:
+    """Mongo filters ({city, neighborhood} pairs) selecting the readers of map cluster `cluster_id`.
+    Ids are hashes, so they are resolved against the distinct place names readers actually have."""
+    pairs = await db.users.aggregate([
+        {"$match": {"deleted_at": None, "lat": {"$ne": None}, "lng": {"$ne": None}}},
+        {"$group": {"_id": {"city": "$city", "neighborhood": "$neighborhood"}}},
+    ]).to_list(None)
+    out = []
+    for pair in pairs:
+        place = {"city": pair["_id"].get("city"), "neighborhood": pair["_id"].get("neighborhood")}
+        area = _area_of(place)
+        if area and _cluster_id(*area) == cluster_id:
+            out.append(place)
+    return out
+
+
+def _cluster_id_of(p: dict) -> Optional[str]:
+    """The id of the map cluster this reader is counted in (same rule as GET /map/clusters)."""
+    area = _cluster_area(p)
+    return _cluster_id(*area) if area else None
+
+
 @api.get("/map/clusters")
 async def map_clusters(user: dict = Depends(get_current_user)):
     """Exchanging readers grouped by the area their device reported (neighborhood, else city).
     Readers without a real location are left off the map. Totals count readers within
     DEMAND_RADIUS_KM of the viewer when the viewer's own location is known, otherwise everyone."""
-    people = await db.users.find({"is_exchanging": True, "deleted_at": None}, {"_id": 0}).to_list(5000)
+    blocked = await _blocked_ids(user["user_id"])
+    people = await db.users.find({"is_exchanging": True, "deleted_at": None, "user_id": {"$nin": list(blocked)}},
+                                 {"_id": 0}).to_list(5000)
     groups: dict = {}
     for p in people:
-        if not has_location(p):
+        area = _cluster_area(p)
+        if not area:
             continue
-        city = p.get("city") or ""
-        label = p.get("neighborhood") or city
-        if not label:
-            continue
+        city, label = area
         g = groups.setdefault((city.casefold(), label.casefold()), {"label": label, "city": city or None, "people": []})
         g["people"].append(p)
 
@@ -1663,7 +2578,7 @@ async def map_clusters(user: dict = Depends(get_current_user)):
         top = sorted(genre_counts.items(), key=lambda x: -x[1])[:4]
         lat = round(sum(m["lat"] for m in members) / len(members), CLUSTER_CENTER_DECIMALS)
         lng = round(sum(m["lng"] for m in members) / len(members), CLUSTER_CENTER_DECIMALS)
-        cluster_id = hashlib.sha1(f"{g['city']}|{g['label']}".casefold().encode()).hexdigest()[:12]
+        cluster_id = _cluster_id(g["city"], g["label"])
         clusters.append(
             {
                 "id": cluster_id,
@@ -1831,34 +2746,50 @@ async def _check_request_limits(requester_id: str, receiver_id: str) -> None:
 EVENT_TYPES = ("proposal_received", "proposal_accepted", "proposal_declined", "proposal_cancelled", "chat_accepted")
 
 # Push texts, localized by the recipient's preferred language (English fallback). {name} = the actor.
+# Event pushes describe the event in the title. A chat message push is the title "BookLoop" plus
+# "message" as its body and never carries the message itself: lock screens, Expo and Google/Apple
+# push services must not see private chat text (or whether it was a photo).
 PUSH_TEXT = {
     "en": {"proposal_received": "New swap proposal from {name}", "proposal_accepted": "{name} accepted your swap",
            "proposal_declined": "{name} declined the swap", "proposal_cancelled": "{name} cancelled the swap",
-           "chat_accepted": "{name} accepted your request — you can chat now", "message": "New message from {name}",
-           "photo": "📷 Photo"},
+           "chat_accepted": "{name} accepted your request — you can chat now", "message": "You have a new message from {name}",
+           "message_anon": "You have a new message"},
     "uz": {"proposal_received": "{name}dan yangi almashuv taklifi", "proposal_accepted": "{name} almashuvingizni qabul qildi",
            "proposal_declined": "{name} almashuvni rad etdi", "proposal_cancelled": "{name} almashuvni bekor qildi",
            "chat_accepted": "{name} so‘rovingizni qabul qildi — endi yozishishingiz mumkin",
-           "message": "{name}dan yangi xabar", "photo": "📷 Rasm"},
+           "message": "{name}dan sizga yangi xabar keldi", "message_anon": "Sizga yangi xabar keldi"},
     "ru": {"proposal_received": "Новое предложение обмена от {name}", "proposal_accepted": "{name} принял(а) ваш обмен",
            "proposal_declined": "{name} отклонил(а) обмен", "proposal_cancelled": "{name} отменил(а) обмен",
            "chat_accepted": "{name} принял(а) ваш запрос — теперь можно переписываться",
-           "message": "Новое сообщение от {name}", "photo": "📷 Фото"},
+           "message": "У вас новое сообщение от {name}", "message_anon": "У вас новое сообщение"},
     "it": {"proposal_received": "Nuova proposta di scambio da {name}", "proposal_accepted": "{name} ha accettato il tuo scambio",
            "proposal_declined": "{name} ha rifiutato lo scambio", "proposal_cancelled": "{name} ha annullato lo scambio",
            "chat_accepted": "{name} ha accettato la tua richiesta — ora potete chattare",
-           "message": "Nuovo messaggio da {name}", "photo": "📷 Foto"},
+           "message": "Hai un nuovo messaggio da {name}", "message_anon": "Hai un nuovo messaggio"},
     "ar": {"proposal_received": "عرض تبادل جديد من {name}", "proposal_accepted": "قبل {name} التبادل",
            "proposal_declined": "رفض {name} التبادل", "proposal_cancelled": "ألغى {name} التبادل",
-           "chat_accepted": "قبل {name} طلبك — يمكنكما الدردشة الآن", "message": "رسالة جديدة من {name}",
-           "photo": "📷 صورة"},
+           "chat_accepted": "قبل {name} طلبك — يمكنكما الدردشة الآن", "message": "لديك رسالة جديدة من {name}",
+           "message_anon": "لديك رسالة جديدة"},
 }
 EXPO_PUSH_URL = os.environ.get("EXPO_PUSH_URL") or "https://exp.host/--/api/v2/push/send"
 PUSH_TOKEN_RE = re.compile(r"^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_\-]{8,120}\]$")
 
 
+PUSH_TITLE_APP = "BookLoop"
+
+
+def _push_name(name: Optional[str]) -> str:
+    """The actor's name as one plain line: line breaks and runs of spaces collapse, so a name can't add
+    fake lines to a notification. (The push is JSON, so nothing else needs escaping; the name is a
+    format() argument, so braces in it are never interpreted.)"""
+    return " ".join((name or "").split())[:NAME_MAX_CHARS]
+
+
 def _push_text(lang: Optional[str], kind: str, name: str) -> str:
     table = PUSH_TEXT.get(lang or "en") or PUSH_TEXT["en"]
+    name = _push_name(name)
+    if kind == "message" and not name:
+        kind = "message_anon"
     return (table.get(kind) or PUSH_TEXT["en"][kind]).format(name=name)
 
 
@@ -1885,8 +2816,10 @@ async def _deliver_push(messages: List[dict]) -> None:
         logger.warning(f"Expo push failed: {e!r}")
 
 
-async def _push(user_id: str, kind: str, actor_name: str, data: dict, body: Optional[str] = None) -> None:
-    """Push to the user's registered devices — only if they turned Notifications on."""
+async def _push(user_id: str, kind: str, actor_name: str, data: dict) -> None:
+    """Push to the user's registered devices — only if they turned Notifications on. Texts are in the
+    RECIPIENT's preferred language. `data` carries only what the app needs to open the conversation
+    (swap id, type, in-app route), never content."""
     u = await db.users.find_one({"user_id": user_id, "deleted_at": None},
                                 {"_id": 0, "notifications_enabled": 1, "preferred_language": 1})
     if not u or not u.get("notifications_enabled"):
@@ -1894,8 +2827,9 @@ async def _push(user_id: str, kind: str, actor_name: str, data: dict, body: Opti
     tokens = await db.push_tokens.find({"user_id": user_id}, {"_id": 0, "token": 1}).to_list(20)
     if not tokens:
         return
-    title = _push_text(u.get("preferred_language"), kind, actor_name)
-    msgs = [{"to": t["token"], "title": title, "body": body or "", "sound": "default", "data": data,
+    text = _push_text(u.get("preferred_language"), kind, actor_name)
+    title, body = (PUSH_TITLE_APP, text) if kind == "message" else (text, "")
+    msgs = [{"to": t["token"], "title": title, "body": body, "sound": "default", "data": data,
              "channelId": "default", "user_id": user_id, "kind": kind} for t in tokens]
     # Only the Expo fields go over the wire; user_id/kind are kept for the debug record.
     if OTP_DEBUG_MODE:
@@ -2008,7 +2942,7 @@ async def create_swap(body: SwapCreate, user: dict = Depends(get_current_user)):
     if body.receiver_id == uid:
         raise HTTPException(status_code=400, detail="Cannot swap with yourself")
     receiver = await db.users.find_one({"user_id": body.receiver_id, "deleted_at": None})
-    if not receiver:
+    if not receiver or await _is_blocked_pair(uid, body.receiver_id):
         raise HTTPException(status_code=404, detail="User not found")
     existing = await db.swaps.find_one(
         {"$and": [_pair_query(uid, body.receiver_id), {"status": {"$in": ["pending", *OPEN_ACTIVE_STATUSES]}}]}
@@ -2147,7 +3081,8 @@ async def swap_with_user(user_id: str, user: dict = Depends(get_current_user)):
     return {
         "open": await _swap_with_meta(open_swap, uid) if open_swap else None,
         "latest": await _swap_with_meta(latest, uid) if latest else None,
-        "can_propose": bool(other) and user_id != uid and other.get("is_exchanging", True),
+        "can_propose": bool(other) and user_id != uid and other.get("is_exchanging", True)
+        and not await _is_blocked_pair(uid, user_id),
         "latest_chat_open": bool(latest) and await _chat_state(latest, uid) == CHAT_OPEN,
     }
 
@@ -2232,6 +3167,7 @@ async def _release_books(book_ids: List[str]) -> None:
 @api.post("/swaps/{swap_id}/messages")
 async def send_message(swap_id: str, body: MessageBody, user: dict = Depends(get_current_user)):
     s = await _participant_swap(swap_id, user)
+    await _require_not_blocked(s, user["user_id"])
     state = await _chat_state(s, user["user_id"])
     if state == CHAT_CLOSED:
         _require_status(s, *ACCEPTED_STATUSES, "pending")  # -> 409 "Swap is declined; action not allowed"
@@ -2239,6 +3175,7 @@ async def send_message(swap_id: str, body: MessageBody, user: dict = Depends(get
         raise _coded(403, "chat_locked", "Chat opens once the other reader accepts the request")
     if not body.text.strip() and not body.image_url:
         raise HTTPException(status_code=400, detail="Empty message")
+    image_url = checked_image_url(body.image_url, user["user_id"]) if body.image_url else None
     if body.client_id:
         prior = await db.messages.find_one(
             {"swap_id": swap_id, "sender_id": user["user_id"], "client_id": body.client_id}, {"_id": 0}
@@ -2246,12 +3183,12 @@ async def send_message(swap_id: str, body: MessageBody, user: dict = Depends(get
         if prior:  # the same send retried: return the original, never store it twice
             prior["created_at"] = prior["created_at"].isoformat()
             return {"message": prior, "duplicate": True}
-    mtype = "image" if body.image_url else "text"
-    msg = await _add_message(swap_id, user["user_id"], mtype, body.text, image_url=body.image_url, client_id=body.client_id)
+    await _rate_limit(f"message:{user['user_id']}", 30, timedelta(minutes=1))
+    mtype = "image" if image_url else "text"
+    msg = await _add_message(swap_id, user["user_id"], mtype, body.text, image_url=image_url, client_id=body.client_id)
     other_id = _other_id(s, user["user_id"])
-    other = await db.users.find_one({"user_id": other_id}, {"_id": 0, "preferred_language": 1})
-    preview = body.text.strip()[:140] if mtype == "text" else _push_text((other or {}).get("preferred_language"), "photo", "")
-    await _push(other_id, "message", user.get("name", ""), {"swap_id": swap_id, "type": "message", "url": f"/swap/{swap_id}"}, preview)
+    # Private: the push names the sender only — no message text, preview or photo hint (see PUSH_TEXT).
+    await _push(other_id, "message", user.get("name", ""), {"swap_id": swap_id, "type": "message", "url": f"/swap/{swap_id}"})
     msg["created_at"] = msg["created_at"].isoformat()
     return {"message": msg}
 
@@ -2259,6 +3196,7 @@ async def send_message(swap_id: str, body: MessageBody, user: dict = Depends(get
 @api.post("/swaps/{swap_id}/propose")
 async def propose(swap_id: str, body: ProposeBody, user: dict = Depends(get_current_user)):
     s = await _participant_swap(swap_id, user)
+    await _require_not_blocked(s, user["user_id"])
     _require_status(s, "pending")
     other_id = s["receiver_id"] if s["requester_id"] == user["user_id"] else s["requester_id"]
     # A proposal is structured (two books), never free text — but each one still reaches the other
@@ -2296,6 +3234,7 @@ async def propose(swap_id: str, body: ProposeBody, user: dict = Depends(get_curr
 @api.post("/swaps/{swap_id}/accept")
 async def accept_swap(swap_id: str, user: dict = Depends(get_current_user)):
     s = await _participant_swap(swap_id, user)
+    await _require_not_blocked(s, user["user_id"])
     _require_status(s, "pending")
     proposal = s.get("active_proposal")
     if not proposal:
@@ -2333,6 +3272,7 @@ async def allow_chat(swap_id: str, user: dict = Depends(get_current_user)):
     """"Accept to continue chatting": the recipient opens the conversation without accepting the
     books yet. Only the recipient can do this, only while the request is pending."""
     s = await _participant_swap(swap_id, user)
+    await _require_not_blocked(s, user["user_id"])
     if user["user_id"] != s["receiver_id"]:
         raise _coded(403, "only_recipient", "Only the reader who received the request can accept it")
     _require_status(s, "pending")
@@ -2598,7 +3538,8 @@ async def unregister_push_token(body: PushTokenBody, user: dict = Depends(get_cu
 @api.get("/favorites")
 async def list_favorites(user: dict = Depends(get_current_user)):
     favs = await db.favorites.find({"user_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
-    ids = [f["target_id"] for f in favs]
+    blocked = await _blocked_ids(user["user_id"])
+    ids = [f["target_id"] for f in favs if f["target_id"] not in blocked]
     people = {u["user_id"]: u for u in await db.users.find({"user_id": {"$in": ids}, "deleted_at": None}, {"_id": 0}).to_list(None)}
     counts: dict = {}
     for b in await db.books.find({"owner_id": {"$in": ids}, "status": "Available", "deleted_at": None},
@@ -2621,7 +3562,8 @@ async def list_favorites(user: dict = Depends(get_current_user)):
 async def add_favorite(target_id: str, user: dict = Depends(get_current_user)):
     if target_id == user["user_id"]:
         raise _coded(400, "cannot_favorite_self", "You can't favorite yourself")
-    if not await db.users.find_one({"user_id": target_id, "deleted_at": None}, {"_id": 1}):
+    if await _is_blocked_pair(user["user_id"], target_id) or not await db.users.find_one(
+            {"user_id": target_id, "deleted_at": None}, {"_id": 1}):
         raise HTTPException(status_code=404, detail="User not found")
     # Upsert on the unique (user_id, target_id) pair: repeating the call never creates a duplicate.
     try:
@@ -2639,6 +3581,234 @@ async def add_favorite(target_id: str, user: dict = Depends(get_current_user)):
 async def remove_favorite(target_id: str, user: dict = Depends(get_current_user)):
     await db.favorites.delete_one({"user_id": user["user_id"], "target_id": target_id})
     return {"ok": True, "is_favorite": False}
+
+
+# ----------------------------------------------------------------------------
+# Blocking. Enforced here, never only in the app: a block hides each reader from the other
+# everywhere (Discover, search, Map, profiles, books, favorites) and stops every interaction
+# (new swaps, proposals, accepting, chat). Past conversations stay readable as history.
+# ----------------------------------------------------------------------------
+async def _blocked_ids(uid: str) -> set:
+    """Readers `uid` blocked, plus readers who blocked `uid` (both directions hide)."""
+    out = set()
+    async for b in db.blocks.find({"$or": [{"blocker_id": uid}, {"blocked_id": uid}]}, {"_id": 0}):
+        out.add(b["blocked_id"] if b["blocker_id"] == uid else b["blocker_id"])
+    return out
+
+
+async def _is_blocked_pair(a: str, b: str) -> bool:
+    return bool(await db.blocks.find_one(
+        {"$or": [{"blocker_id": a, "blocked_id": b}, {"blocker_id": b, "blocked_id": a}]}, {"_id": 1}))
+
+
+async def _require_not_blocked(s: dict, uid: str) -> None:
+    if await _is_blocked_pair(uid, _other_id(s, uid)):
+        raise _coded(403, "blocked", "You can't interact with this reader")
+
+
+async def _close_open_swaps(a: str, b: Optional[str], reason_key: str, reason_text: str) -> None:
+    """Cancel the open swaps of `a` (with `b` only, when given), releasing books they reserved."""
+    pair = _pair_query(a, b) if b else {"$or": [{"requester_id": a}, {"receiver_id": a}]}
+    async for s in db.swaps.find({"$and": [pair, {"status": {"$in": ["pending", "accepted", "active"]}}]}, {"_id": 0}):
+        res = await db.swaps.update_one({"id": s["id"], "status": s["status"]}, {"$set": {"status": "cancelled"}})
+        if res.modified_count and s["status"] in ("accepted", "active"):
+            await _set_proposal_books(s.get("active_proposal"), "Reserved", "Available")
+        if res.modified_count:
+            await _add_message(s["id"], None, "system", reason_text, key=reason_key, params={})
+
+
+@api.get("/blocks")
+async def list_blocks(user: dict = Depends(get_current_user)):
+    """The readers I blocked (so I can unblock them). Who blocked me is never revealed."""
+    rows = await db.blocks.find({"blocker_id": user["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    people = {u["user_id"]: u for u in await db.users.find(
+        {"user_id": {"$in": [r["blocked_id"] for r in rows]}}, {"_id": 0}).to_list(None)}
+    out = []
+    for r in rows:
+        u = people.get(r["blocked_id"])
+        if u:
+            pu = public_user(u)
+            out.append({"user_id": pu["user_id"], "name": pu["name"], "avatar_url": pu["avatar_url"],
+                        "is_deleted": bool(pu.get("is_deleted")), "blocked_at": r["created_at"].isoformat()})
+    return {"blocked": out}
+
+
+@api.put("/blocks/{target_id}")
+async def block_user(target_id: str, user: dict = Depends(get_current_user)):
+    uid = user["user_id"]
+    if target_id == uid:
+        raise _coded(400, "cannot_block_self", "You can't block yourself")
+    if not await db.users.find_one({"user_id": target_id}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="User not found")
+    await _rate_limit(f"block:{uid}", 100, timedelta(days=1))
+    try:
+        await db.blocks.update_one({"blocker_id": uid, "blocked_id": target_id},
+                                   {"$setOnInsert": {"created_at": now_utc()}}, upsert=True)
+    except DuplicateKeyError:
+        pass
+    await db.favorites.delete_many({"$or": [{"user_id": uid, "target_id": target_id}, {"user_id": target_id, "target_id": uid}]})
+    # The message names no one: it must not tell the other reader that they were blocked.
+    await _close_open_swaps(uid, target_id, "swapChat.sys.closed", "This swap was closed.")
+    return {"ok": True, "blocked": True}
+
+
+@api.delete("/blocks/{target_id}")
+async def unblock_user(target_id: str, user: dict = Depends(get_current_user)):
+    await db.blocks.delete_one({"blocker_id": user["user_id"], "blocked_id": target_id})
+    return {"ok": True, "blocked": False}
+
+
+# ----------------------------------------------------------------------------
+# Reports: any reader can report a reader, a book listing, a review, a chat message or a swap
+# they can see. Reports are stored for moderation with a snapshot of the reported content (so it
+# can be reviewed even if it is later edited or deleted). There is no moderation UI yet: see
+# backend/scripts/moderation.py.
+# ----------------------------------------------------------------------------
+REPORT_REASONS = ("spam", "harassment", "inappropriate", "fraud", "safety", "other")
+
+
+class ReportBody(BaseModel):
+    target_type: Literal["user", "book", "review", "message", "swap"]
+    target_id: str = Field(min_length=1, max_length=64)
+    reason: Literal["spam", "harassment", "inappropriate", "fraud", "safety", "other"]
+    details: Optional[str] = Field(default=None, max_length=1000)
+
+
+async def _report_target(t: str, tid: str, uid: str) -> Optional[tuple]:
+    """(responsible user id, snapshot) for a target the reporter can see and did not create."""
+    if t == "user":
+        u = await db.users.find_one({"user_id": tid}, {"_id": 0})
+        if u and tid != uid:
+            return tid, {"name": u.get("name", ""), "bio": u.get("bio", ""), "avatar_url": u.get("avatar_url")}
+    elif t == "book":
+        b = await db.books.find_one({"id": tid}, {"_id": 0})
+        if b and b["owner_id"] != uid:
+            return b["owner_id"], {k: b.get(k) for k in ("title", "author", "cover_url")}
+    elif t == "review":
+        r = await db.ratings.find_one({"id": tid}, {"_id": 0})
+        if r and r.get("rater_id") != uid:
+            return r.get("rater_id"), {"stars": r.get("stars"), "review": r.get("review", ""), "ratee_id": r.get("ratee_id")}
+    elif t == "message":
+        m = await db.messages.find_one({"id": tid}, {"_id": 0})
+        s = m and await db.swaps.find_one({"id": m["swap_id"]}, {"_id": 0})
+        if s and uid in (s["requester_id"], s["receiver_id"]) and m.get("sender_id") and m["sender_id"] != uid:
+            return m["sender_id"], {"text": m.get("text", ""), "image_url": m.get("image_url"), "swap_id": m["swap_id"]}
+    elif t == "swap":
+        s = await db.swaps.find_one({"id": tid}, {"_id": 0})
+        if s and uid in (s["requester_id"], s["receiver_id"]):
+            return _other_id(s, uid), {"status": s.get("status"), "note": s.get("note")}
+    return None
+
+
+@api.post("/reports")
+async def create_report(body: ReportBody, user: dict = Depends(get_current_user)):
+    uid = user["user_id"]
+    target = await _report_target(body.target_type, body.target_id, uid)
+    if not target:
+        raise HTTPException(status_code=404, detail="Not found")
+    existing = await db.reports.find_one(
+        {"reporter_id": uid, "target_type": body.target_type, "target_id": body.target_id, "status": "open"}, {"_id": 0, "id": 1})
+    if existing:  # reporting the same thing twice just confirms the open report
+        return {"ok": True, "report_id": existing["id"]}
+    await _rate_limit(f"report:{uid}", 20, timedelta(days=1))
+    responsible, snapshot = target
+    report = {
+        "id": new_id("rep"), "reporter_id": uid, "target_type": body.target_type, "target_id": body.target_id,
+        "target_user_id": responsible, "reason": body.reason, "details": clean_note_text(body.details, 1000),
+        "snapshot": snapshot, "status": "open", "created_at": now_utc(),
+    }
+    await db.reports.insert_one(dict(report))
+    return {"ok": True, "report_id": report["id"]}
+
+
+# ----------------------------------------------------------------------------
+# Account deletion (Profile -> Account -> Delete account). Everything that identifies the person is
+# removed; records that also belong to someone else (their side of a swap conversation, a review they
+# received from this person) are kept without identity. Irreversible.
+# ----------------------------------------------------------------------------
+DELETED_LABEL_EN = "A former BookLoop member"
+
+
+class DeleteAccountBody(BaseModel):
+    # Must be exactly true: a deliberate, confirmed request, never a side effect of another call.
+    confirm: bool
+
+
+async def delete_account(uid: str) -> dict:
+    """Erase a reader's account. Idempotent. Returns counts of what was removed (for logs/tests)."""
+    u = await db.users.find_one({"user_id": uid}, {"_id": 0})
+    if not u:
+        return {}
+    name, email = u.get("name") or "", (u.get("email") or "").lower()
+    stats: dict = {}
+
+    # Open swaps end (books the other reader had reserved for them become available again).
+    await _close_open_swaps(uid, None, "swapChat.sys.accountDeleted", "This reader deleted their account.")
+
+    # Their name inside the system lines of conversations ("X cancelled the swap"…), for both sides.
+    swap_ids = [s["id"] async for s in db.swaps.find(
+        {"$or": [{"requester_id": uid}, {"receiver_id": uid}]}, {"_id": 0, "id": 1})]
+    if name:
+        async for m in db.messages.find({"swap_id": {"$in": swap_ids}, "params.name": name}, {"_id": 1, "text": 1}):
+            await db.messages.update_one({"_id": m["_id"]}, {"$set": {
+                "params.name": "", "params.deleted": True, "text": (m.get("text") or "").replace(name, DELETED_LABEL_EN)}})
+        async for sw in db.swaps.find({"id": {"$in": swap_ids}, "last_message": {"$regex": re.escape(name)}},
+                                      {"_id": 1, "last_message": 1}):
+            await db.swaps.update_one({"_id": sw["_id"]}, {"$set": {
+                "last_message": sw["last_message"].replace(name, DELETED_LABEL_EN),
+                "last_message_params.name": "", "last_message_params.deleted": True}})
+    # Their uploaded photos (avatar, covers, chat photos) are deleted from storage; chat photos they sent
+    # become "photo removed" in the other reader's history.
+    uploads = await db.uploads.find({"owner_id": uid}, {"_id": 0, "path": 1}).to_list(None)
+    for up in uploads:
+        try:
+            await run_in_threadpool(delete_object, up["path"])
+        except OSError:
+            pass
+    stats["uploads"] = len(uploads)
+    await db.uploads.delete_many({"owner_id": uid})
+    await db.messages.update_many({"sender_id": uid, "image_url": {"$ne": None}},
+                                  {"$set": {"image_url": None, "image_removed": True}})
+    # Books leave Discover; their titles stay only inside past proposals (they describe the swap).
+    stats["books"] = (await db.books.update_many(
+        {"owner_id": uid}, {"$set": {"deleted_at": now_utc(), "cover_url": None, "aliases": [], "search_tokens": []}})).modified_count
+    # Reviews: the ones about them go; the ones they wrote stay for the reviewed reader, without author.
+    stats["reviews_received"] = (await db.ratings.delete_many({"ratee_id": uid})).deleted_count
+    await db.ratings.update_many({"rater_id": uid}, {"$set": {"rater_id": None, "rater_deleted": True}})
+    stats["favorites"] = (await db.favorites.delete_many({"$or": [{"user_id": uid}, {"target_id": uid}]})).deleted_count
+    await db.blocks.delete_many({"$or": [{"blocker_id": uid}, {"blocked_id": uid}]})
+    await db.notifications.delete_many({"user_id": uid})
+    await db.notifications.update_many({"actor_id": uid}, {"$set": {"actor_id": None}})
+    await db.reports.update_many({"reporter_id": uid}, {"$set": {"reporter_id": None}})
+    await db.push_tokens.delete_many({"user_id": uid})
+    await db.user_sessions.delete_many({"user_id": uid})
+    await db.auth_identities.delete_many({"user_id": uid})
+    await db.google_logins.delete_many({"user_id": uid})
+    await db.google_link_tickets.delete_many({"user_id": uid})
+    await db.oauth_states.delete_many({"link_user_id": uid})
+    await db.security_events.delete_many({"user_id": uid})
+    if email:
+        await db.pending_registrations.delete_many({"email": email})
+        await db.email_verifications.delete_many({"email": email})
+        await db.rate_events.delete_many({"key": {"$regex": "^login-fail:" + re.escape(email) + "$"}})
+    # The account record stays only as a tombstone (so old swaps still resolve to "deleted reader").
+    await db.users.update_one({"user_id": uid}, {"$set": {
+        "deleted_at": u.get("deleted_at") or now_utc(), "email": f"deleted+{uid}@deleted.invalid",
+        "name": "", "bio": "", "avatar_url": None, "password_hash": None, "city": None, "neighborhood": None,
+        "country": None, "lat": None, "lng": None, "location_updated_at": None, "genres": [], "languages": [],
+        "reading_interests": [], "is_exchanging": False, "preferred_language": None, "notifications_enabled": False,
+        "search_tokens": [], "rating": 0.0, "rating_count": 0,
+    }, "$unset": {"seed": "", "test_account": "", "google_sub": "", "apple_sub": "", "client_version": "",
+               "client_platform": "", "client_seen_at": "", "google_signin_via": "", "google_signin_at": ""}})
+    return stats
+
+
+@api.post("/users/me/delete")
+async def delete_me(body: DeleteAccountBody, user: dict = Depends(get_current_user)):
+    if body.confirm is not True:
+        raise HTTPException(status_code=400, detail="Confirm the deletion")
+    await delete_account(user["user_id"])
+    return {"ok": True, "deleted": True}
 
 
 # ----------------------------------------------------------------------------
@@ -2667,9 +3837,16 @@ async def upload(file: UploadFile = File(...), user: dict = Depends(get_current_
         raise HTTPException(status_code=413, detail="Image too large (max 8 MB)")
     kind = _sniff_image(data)
     if not kind:
-        raise HTTPException(status_code=400, detail="Unsupported file type; upload a JPEG, PNG, WebP or HEIC image")
+        raise HTTPException(status_code=400, detail="Unsupported file type; upload a JPEG, PNG or WebP image")
     # Type/extension come from the file's actual bytes, not the client-supplied headers.
     ext, ctype = kind
+    await _rate_limit(f"upload:{user['user_id']}", 60, timedelta(hours=1))
+    # Photos carry EXIF (GPS position, device, time) that must never reach other readers. HEIC's
+    # metadata cannot be removed safely here, so it is refused (the app always sends JPEG).
+    try:
+        data = strip_metadata(data, ext)
+    except UnsupportedImage:
+        raise _coded(400, "unsupported_image", "Please upload a JPEG, PNG or WebP image")
     path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
     try:
         await run_in_threadpool(put_object, path, data)
@@ -2716,9 +3893,65 @@ async def root():
 
 app.include_router(api)
 
+# Request bodies: FastAPI reads and parses a whole body before any endpoint code runs, so without a cap any
+# client could make the server buffer (or spool to disk) as much as it sends. JSON bodies here are a few KB;
+# an upload is one image of at most MAX_UPLOAD_BYTES plus its multipart framing.
+MAX_BODY_BYTES = 1024 * 1024
+MAX_UPLOAD_BODY_BYTES = MAX_UPLOAD_BYTES + 64 * 1024
+BODY_TOO_LARGE = "Request body too large"
+
+
+class _BodyTooLarge(HTTPException):
+    def __init__(self):
+        super().__init__(status_code=413, detail=BODY_TOO_LARGE)
+
+
+class BodySizeLimitMiddleware:
+    """413 for a body over the limit: up front from Content-Length, or as soon as a streamed (chunked)
+    body grows past it — before the rest of it is read."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        limit = MAX_UPLOAD_BODY_BYTES if scope["path"] == "/api/upload" else MAX_BODY_BYTES
+        declared = dict(scope["headers"]).get(b"content-length")
+        if declared is not None and (not declared.isdigit() or int(declared) > limit):
+            return await JSONResponse({"detail": BODY_TOO_LARGE}, status_code=413)(scope, receive, send)
+        received = 0
+        started = False
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    raise _BodyTooLarge()  # an HTTPException: the endpoint's error handling turns it into a 413
+            return message
+
+        async def tracking_send(message):
+            nonlocal started
+            started = started or message["type"] == "http.response.start"
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracking_send)
+        except _BodyTooLarge:
+            if started:
+                raise
+            await JSONResponse({"detail": BODY_TOO_LARGE}, status_code=413)(scope, receive, send)
+
+
+app.add_middleware(BodySizeLimitMiddleware)
+# Added last = outermost, so error responses (413 included) carry CORS headers too. Sessions are bearer
+# tokens the app attaches itself — never cookies — so no request needs browser credentials, and with
+# allow_credentials off a wildcard origin is never turned into an echo of the caller's Origin.
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2736,12 +3969,19 @@ async def startup():
     await db.oauth_states.create_index("state", unique=True)
     await db.oauth_states.create_index("created_at", expireAfterSeconds=600)
     await db.google_logins.create_index("sid", unique=True)
-    await db.google_logins.create_index("created_at", expireAfterSeconds=120)
+    await db.google_logins.create_index("created_at", expireAfterSeconds=int(GOOGLE_LOGIN_TTL.total_seconds()))
+    await db.google_link_tickets.create_index("lid", unique=True)
+    await db.google_link_tickets.create_index("user_id")
+    await db.google_link_tickets.create_index("created_at", expireAfterSeconds=int(GOOGLE_LINK_TTL.total_seconds()))
     # v2.2 provider identities (additive; legacy Google accounts get theirs on their next Google sign-in).
     await db.auth_identities.create_index([("provider", 1), ("subject", 1)], unique=True)
     await db.auth_identities.create_index([("user_id", 1), ("provider", 1)], unique=True)
     await db.apple_nonces.create_index("id", unique=True)
     await db.apple_nonces.create_index("created_at", expireAfterSeconds=600)
+    await db.google_nonces.create_index("id", unique=True)
+    await db.google_nonces.create_index("created_at", expireAfterSeconds=int(GOOGLE_NONCE_TTL.total_seconds()))
+    await db.security_events.create_index("user_id")
+    await db.security_events.create_index("created_at", expireAfterSeconds=int(SECURITY_EVENT_TTL.total_seconds()))
     # Registration OTP: pending registrations self-clean after a day of inactivity (a user who never
     # finishes signing up); email verification tokens are single-use and expire fast either way, but
     # the TTL index also clears any left stranded by a crash between verify-otp and complete.
@@ -2750,6 +3990,27 @@ async def startup():
     await db.email_verifications.create_index("token", unique=True)
     await db.email_verifications.create_index("created_at", expireAfterSeconds=EMAIL_VERIFICATION_TTL_MINUTES * 60)
     await db.books.create_index("owner_id")
+    # Every by-id book read/update (detail, edit, swaps). Not unique: an existing duplicate must not
+    # be able to stop the server from starting.
+    await db.books.create_index("id")
+    await db.users.create_index("search_tokens")
+    await db.blocks.create_index([("blocker_id", 1), ("blocked_id", 1)], unique=True)
+    await db.blocks.create_index("blocked_id")
+    await db.reports.create_index([("status", 1), ("created_at", -1)])
+    await db.reports.create_index([("reporter_id", 1), ("target_type", 1), ("target_id", 1)])
+    await db.rate_events.create_index([("key", 1), ("at", -1)])
+    await db.rate_events.create_index("at", expireAfterSeconds=2 * 24 * 3600)
+    await db.uploads.create_index("path")
+    await db.uploads.create_index("owner_id")
+    await db.metadata_cache.create_index("key", unique=True)
+    await db.metadata_cache.create_index("fetched_at", expireAfterSeconds=int(METADATA_CACHE_TTL.total_seconds()))
+    await db.users.create_index("search_v")
+    # Book search: anchored-prefix lookups on normalized words/keys (multikey), and the alias backlog.
+    await db.books.create_index("search_tokens")
+    # Also serves the legacy branch of a search ({search_v: {$exists: false}}), which would otherwise
+    # turn every search into a collection scan, and the versioned backfill's stale-book lookup.
+    await db.books.create_index("search_v")
+    await db.books.create_index([("aliases_status", 1), ("created_at", -1)])
     await db.swaps.create_index("requester_id")
     await db.swaps.create_index("receiver_id")
     # Chat loads and polls read one swap's messages in time order.
@@ -2766,10 +4027,40 @@ async def startup():
     await run_in_threadpool(init_storage)
     logger.info(f"File storage: {STORAGE_DIR}")
     try:
-        await sync_demo_community()
+        # The demo community (10 made-up readers with swaps and reviews) is for development and
+        # screenshots only — never mixed into a real community. Off unless SEED_DEMO_COMMUNITY=1.
+        if SEED_DEMO_COMMUNITY:
+            await sync_demo_community()
         await backfill_onboarding_state()
     except Exception as e:
         logger.warning(f"Seed failed: {e}")
+    try:
+        await coarsen_stored_locations()
+    except Exception as e:
+        logger.warning(f"Location precision migration failed: {e}")
+    # In the background: startup is not delayed, and books not reached yet are still found by the
+    # legacy plain-text branch of the search.
+    _spawn(_backfill_search())
+    _spawn(_cleanup_uploads_quietly())
+
+
+async def _cleanup_uploads_quietly() -> None:
+    try:
+        n = await cleanup_orphan_uploads()
+        if n:
+            logger.info(f"Removed {n} unused uploads")
+    except Exception as e:
+        logger.warning(f"Upload cleanup failed: {e}")
+
+
+async def _backfill_search() -> None:
+    try:
+        n = await backfill_search_tokens()
+        if n:
+            logger.info(f"Search tokens built for {n} books/readers")
+    except Exception as e:
+        logger.warning(f"Search token backfill failed: {e}")
+    await backfill_aliases()
 
 
 @app.on_event("shutdown")
@@ -2785,6 +4076,63 @@ async def shutdown():
 # books, completed swaps and reviews — also carries seed=True, and demo swaps/reviews only ever
 # involve two demo users, so real users never receive fake reviews.
 DEMO_EMAIL_DOMAIN = "@demo.bookloop"
+SEED_DEMO_COMMUNITY = (os.environ.get("SEED_DEMO_COMMUNITY") or "").strip().lower() in ("1", "true", "yes")
+
+
+async def remove_demo_community() -> int:
+    """Delete the demo readers (scripts/remove_demo_community.py): their own demo swaps/reviews go
+    entirely; anything real users did with them is handled like any other account deletion."""
+    demo = await db.users.find({"seed": True, "email": {"$regex": re.escape(DEMO_EMAIL_DOMAIN) + "$"},
+                                "password_hash": None}, {"_id": 0, "user_id": 1}).to_list(None)
+    ids = [d["user_id"] for d in demo]
+    if not ids:
+        return 0
+    seed_swaps = [s["id"] async for s in db.swaps.find({"seed": True}, {"_id": 0, "id": 1})]
+    await db.messages.delete_many({"swap_id": {"$in": seed_swaps}})
+    await db.swaps.delete_many({"seed": True})
+    await db.ratings.delete_many({"seed": True})
+    await db.books.delete_many({"seed": True})
+    for uid in ids:
+        await delete_account(uid)
+    return len(ids)
+
+
+async def coarsen_stored_locations() -> None:
+    """One-time: round coordinates stored before LOCATION_STORE_DECIMALS was lowered (4 -> 3)."""
+    marker = "location_precision_3"
+    if await db.app_settings.find_one({"_id": marker}):
+        return
+    d = LOCATION_STORE_DECIMALS
+    await db.users.update_many({"lat": {"$type": "number"}, "lng": {"$type": "number"}},
+                               [{"$set": {"lat": {"$round": ["$lat", d]}, "lng": {"$round": ["$lng", d]}}}])
+    await db.app_settings.update_one({"_id": marker}, {"$set": {"done_at": now_utc()}}, upsert=True)
+
+
+ORPHAN_UPLOAD_AGE = timedelta(days=1)
+
+
+async def cleanup_orphan_uploads() -> int:
+    """Delete uploads nobody uses a day after they were made (a photo picked and then abandoned)."""
+    cutoff = now_utc() - ORPHAN_UPLOAD_AGE
+    candidates = await db.uploads.find({"created_at": {"$lt": cutoff}}, {"_id": 0, "path": 1}).to_list(None)
+    if not candidates:
+        return 0
+    used = set()
+    pattern = {"$regex": "^" + re.escape(FILE_PREFIX)}
+    for coll, field in ((db.users, "avatar_url"), (db.books, "cover_url"), (db.messages, "image_url")):
+        async for d in coll.find({field: pattern}, {"_id": 0, field: 1}):
+            used.add(_url_base(d[field])[len(FILE_PREFIX):])
+    removed = 0
+    for c in candidates:
+        if c["path"] in used:
+            continue
+        try:
+            await run_in_threadpool(delete_object, c["path"])
+        except OSError:
+            continue
+        await db.uploads.delete_one({"path": c["path"]})
+        removed += 1
+    return removed
 
 
 def cover(isbn: str) -> str:
@@ -2981,7 +4329,7 @@ async def sync_demo_community():
         profile = {
             "name": d["name"], "avatar_url": d["avatar"], "bio": d["bio"], "city": "Messina",
             "neighborhood": d["nb"], "genres": d["genres"], "languages": d["langs"],
-            "reading_interests": d["interests"], "is_exchanging": True,
+            "reading_interests": d["interests"], "is_exchanging": True, **_name_search_fields(d["name"]),
         }
         if existing:
             uid = existing["user_id"]
@@ -3000,8 +4348,9 @@ async def sync_demo_community():
             if not await db.books.find_one({"owner_id": uid, "title": title, "seed": True}):
                 await db.books.insert_one({
                     "id": new_id("book"), "owner_id": uid, "title": title, "author": author,
-                    "cover_url": cover(isbn), "condition": cond, "language": lang, "genre": genre,
+                    "cover_url": cover(isbn), "condition": cond, "language": lang, "genre": genre, "isbn": isbn,
                     "status": "Available", "created_at": now_utc(), "deleted_at": None, "seed": True,
+                    **_search_fields({"title": title, "author": author}),
                 })
 
     # 3. Completed swaps between demo readers, and the reviews those swaps produced.

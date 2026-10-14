@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Trash, MapPin, ArrowsClockwise, Fire } from "phosphor-react-native";
 
 import { AppText, Avatar, Button, Field, Chip, BookCover, StatusBadge, RatingPill, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
+import { ReportButton } from "@/src/components/Safety";
 import { apiFetch } from "@/src/api";
 import { distanceOrArea } from "@/src/distance";
 import { openOrRequestSwap } from "@/src/swapStart";
@@ -96,18 +97,18 @@ export default function BookDetail() {
     <View style={styles.root}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <Pressable testID="back-button" onPress={() => router.back()} style={styles.iconBtn}>
+        <Pressable testID="back-button" onPress={() => router.back()} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel={t("common.back")}>
           <DirectionalIcon>
             <ArrowLeft size={22} color={colors.onSurface} />
           </DirectionalIcon>
         </Pressable>
         <AppText variant="heading">{isOwner ? t("bookDetail.editBook") : t("bookDetail.title")}</AppText>
         {isOwner ? (
-          <Pressable testID="delete-book" onPress={remove} style={styles.iconBtn}>
+          <Pressable testID="delete-book" onPress={remove} style={styles.iconBtn} accessibilityRole="button" accessibilityLabel={t("common.delete")}>
             <Trash size={20} color={colors.error} />
           </Pressable>
         ) : (
-          <View style={{ width: 42 }} />
+          <ReportButton target={{ type: "book", id: String(id) }} style={styles.iconBtn} />
         )}
       </View>
 
@@ -120,8 +121,8 @@ export default function BookDetail() {
               <BookCover uri={form.cover_url} width={130} />
               {(data.wanted_by || 0) > 0 && (
                 <View testID="wanted-by" style={styles.wantedPill}>
-                  <Fire size={14} color={colors.onBrandTertiary} weight="fill" />
-                  <AppText variant="caption" color={colors.onBrandTertiary}>
+                  <Fire size={14} color={colors.onAccentSoft} weight="fill" />
+                  <AppText variant="caption" color={colors.onAccentSoft}>
                     {t("bookDetail.wantedBy", { count: data.wanted_by, genre: enumLabel(t, "genre", form.genre) })}
                   </AppText>
                 </View>
@@ -215,7 +216,7 @@ const useStyles = makeStyles((colors) => ({
   chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 4 },
   metaBadge: { backgroundColor: colors.surfaceTertiary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
-  wantedPill: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.brandTertiary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, maxWidth: "100%" },
+  wantedPill: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.accentSoft, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, maxWidth: "100%" },
   ownerCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.surfaceSecondary, borderRadius: 18, padding: 14, borderWidth: 1, borderColor: colors.border, marginTop: 24 },
   footer: { position: "absolute", bottom: 0, left: 0, right: 0, paddingHorizontal: 20, paddingTop: 12, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
 }));

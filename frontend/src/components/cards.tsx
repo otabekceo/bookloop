@@ -90,9 +90,9 @@ export function PersonCard({ person }: { person: Person }) {
               <ExchangingDot active={person.is_exchanging} />
             </View>
             {best && (
-              <View testID={`person-badge-${best.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 3, flexShrink: 1, maxWidth: "100%", backgroundColor: colors.brandTertiary, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 }}>
-                <BadgeIcon id={best.id} size={12} color={colors.onBrandTertiary} />
-                <AppText variant="caption" color={colors.onBrandTertiary} style={{ fontSize: 11, flexShrink: 1 }}>
+              <View testID={`person-badge-${best.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 3, flexShrink: 1, maxWidth: "100%", backgroundColor: colors.accentSoft, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 }}>
+                <BadgeIcon id={best.id} size={12} color={colors.onAccentSoft} />
+                <AppText variant="caption" color={colors.onAccentSoft} style={{ fontSize: 11, flexShrink: 1 }}>
                   {badgeLabel(t, best)}
                 </AppText>
               </View>
@@ -244,9 +244,9 @@ export function BookTile({
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
           {showStatus && <StatusBadge status={book.status} />}
           {(wantedBy || 0) > 0 && (
-            <View testID={`wanted-pill-${book.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
-              <Fire size={11} color={colors.onBrandTertiary} weight="fill" />
-              <AppText variant="caption" color={colors.onBrandTertiary} style={{ fontSize: 11 }}>
+            <View testID={`wanted-pill-${book.id}`} style={{ flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: colors.accentSoft, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+              <Fire size={11} color={colors.onAccentSoft} weight="fill" />
+              <AppText variant="caption" color={colors.onAccentSoft} style={{ fontSize: 11 }}>
                 {t("cards.wantsThis", { count: wantedBy })}
               </AppText>
             </View>

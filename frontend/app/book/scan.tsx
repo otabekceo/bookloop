@@ -87,7 +87,7 @@ export default function ScanBook() {
 
       {/* Overlay */}
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
-        <Pressable testID="close-scan" onPress={() => router.back()} style={styles.iconBtn}>
+        <Pressable testID="close-scan" accessibilityRole="button" accessibilityLabel={t("common.close")} onPress={() => router.back()} style={styles.iconBtn}>
           <X size={22} color="#FFFFFF" />
         </Pressable>
       </View>

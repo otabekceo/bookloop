@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowsClockwise, CaretRight } from "phosphor-react-native";
 
 import { AppText, Avatar, EmptyState, ExchangingDot, DirectionalIcon, haptic } from "@/src/components/ui";
+import { displayName } from "@/src/people";
 import { apiFetch } from "@/src/api";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { renderKeyed } from "@/src/i18n/messageKeys";
@@ -64,10 +65,10 @@ export default function Swaps() {
 
   const statusColor = (s: string) =>
     s === "active" || s === "accepted"
-      ? colors.brandSecondary
+      ? colors.brandSecondaryText
       : s === "completed"
         ? colors.muted
-        : colors.brandPrimary;
+        : colors.onAccentSoft; // pending/closed status — a semantic accent (its text-safe shade), not a primary action
 
   return (
     <View style={styles.root}>
@@ -116,10 +117,10 @@ export default function Swaps() {
               }}
               style={styles.row}
             >
-              <Avatar uri={item.other_user.avatar_url} name={item.other_user.name} size={50} />
+              <Avatar uri={item.other_user.avatar_url} name={displayName(t, item.other_user)} size={50} />
               <View style={{ flex: 1, minWidth: 0, gap: 3 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                  <AppText variant="heading" numberOfLines={1} style={{ flexShrink: 1 }}>{item.other_user.name}</AppText>
+                  <AppText variant="heading" numberOfLines={1} style={{ flexShrink: 1 }}>{displayName(t, item.other_user)}</AppText>
                   <View style={[styles.statusPill, { backgroundColor: statusColor(item.status) + "22", flexShrink: 0 }]}>
                     <AppText variant="caption" color={statusColor(item.status)}>
                       {STATUS_KEYS[item.status] ? t(STATUS_KEYS[item.status]) : item.status}

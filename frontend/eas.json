@@ -10,7 +10,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://api.appbookloop.uz"
+        "EXPO_PUBLIC_BACKEND_URL": "https://api.appbookloop.uz",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "764476555182-8k692vkq9ld4666iur6mo4s6t1cde3v9.apps.googleusercontent.com"
       }
     },
     "production": {

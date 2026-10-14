@@ -9,6 +9,8 @@ import { Image } from "expo-image";
 import { ArrowLeft, PaperPlaneRight, ArrowsClockwise, Star, CheckCircle, ImageSquare, Quotes, LockSimple, ChatCircleDots, UserCircle } from "phosphor-react-native";
 
 import { AppText, Avatar, Button, BookCover, DirectionalIcon, haptic, useToast, useDirectionalStyle } from "@/src/components/ui";
+import { SafetyMenuButton } from "@/src/components/Safety";
+import { displayName } from "@/src/people";
 import { apiFetch, resolveImage } from "@/src/api";
 import { pickImage, uploadWithProgress, openSettings } from "@/src/media";
 import { useAuth } from "@/src/auth";
@@ -246,6 +248,7 @@ export default function SwapChat() {
 
   const swap = data.swap;
   const other = swap.other_user;
+  const otherName = displayName(t, other);
   const otherFirst = other.name?.split(" ")[0] || "";
   const status = swap.status;
   const proposal = swap.active_proposal;
@@ -317,7 +320,21 @@ export default function SwapChat() {
       return (
         <View style={[styles.bubbleRow, { justifyContent: mine ? "flex-end" : "flex-start" }]}>
           <View style={[styles.imageBubble, mine ? imageTailMine : imageTailTheirs]}>
-            <Image source={{ uri: resolveImage(item.image_url) }} style={[styles.chatImage, { width: chatImageSize, height: chatImageSize }]} contentFit="cover" transition={200} />
+            {item.image_url ? (
+              <Image
+                source={{ uri: resolveImage(item.image_url) }}
+                style={[styles.chatImage, { width: chatImageSize, height: chatImageSize }]}
+                contentFit="cover"
+                transition={200}
+                accessibilityRole="image"
+                accessibilityLabel={t("swapChat.photoLabel")}
+              />
+            ) : (
+              // The sender deleted their account: their photos were deleted with it.
+              <AppText variant="caption" color={colors.muted} style={{ padding: 10 }}>
+                {t("swapChat.photoRemoved")}
+              </AppText>
+            )}
             {item.text ? (
               <AppText variant="body" color={colors.onSurface} style={{ marginTop: 6 }}>
                 {item.text}
@@ -360,20 +377,33 @@ export default function SwapChat() {
     <View style={styles.root}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <Pressable testID="back-button" onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable testID="back-button" onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button" accessibilityLabel={t("common.back")}>
           <DirectionalIcon>
             <ArrowLeft size={22} color={colors.onSurface} />
           </DirectionalIcon>
         </Pressable>
-        <Pressable onPress={() => router.push(`/person/${other.user_id}`)} style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
-          <Avatar uri={other.avatar_url} name={other.name} size={38} />
+        <Pressable
+          onPress={() => !other.is_deleted && router.push(`/person/${other.user_id}`)}
+          disabled={!!other.is_deleted}
+          style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}
+          accessibilityRole={other.is_deleted ? undefined : "button"}
+        >
+          <Avatar uri={other.avatar_url} name={otherName} size={38} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <AppText variant="heading" numberOfLines={1}>{other.name}</AppText>
+            <AppText variant="heading" numberOfLines={1}>{otherName}</AppText>
             <AppText variant="caption" color={colors.muted}>
               {STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status}
             </AppText>
           </View>
         </Pressable>
+        {!other.is_deleted && (
+          <SafetyMenuButton
+            userId={other.user_id}
+            name={otherName}
+            reportTarget={{ type: "swap", id: String(id) }}
+            style={styles.backBtn}
+          />
+        )}
       </View>
 
       <KeyboardAvoidingView
@@ -507,7 +537,7 @@ export default function SwapChat() {
             myRated ? (
               <View style={styles.doneRow}>
                 <CheckCircle size={18} color={colors.brandSecondary} weight="fill" />
-                <AppText variant="label" color={colors.brandSecondary}>
+                <AppText variant="label" color={colors.brandSecondaryText}>
                   {t("swapChat.swapCompletedRated")}
                 </AppText>
               </View>
@@ -581,7 +611,15 @@ export default function SwapChat() {
           <AppText variant="title">{t("swapChat.rateYourSwap")}</AppText>
           <View style={{ flexDirection: "row", justifyContent: "center", gap: 8 }}>
             {[1, 2, 3, 4, 5].map((n) => (
-              <Pressable key={n} testID={`star-${n}`} onPress={() => { haptic("selection"); setStars(n); }}>
+              <Pressable
+                key={n}
+                testID={`star-${n}`}
+                onPress={() => { haptic("selection"); setStars(n); }}
+                hitSlop={4}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: n === stars, checked: n === stars }}
+                accessibilityLabel={t("reviews.starsLabel", { count: n })}
+              >
                 <Star size={40} color={colors.rating} weight={n <= stars ? "fill" : "regular"} />
               </Pressable>
             ))}

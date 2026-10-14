@@ -21,7 +21,7 @@ const LOCALES_DIR = path.join(ROOT, "src", "i18n", "locales");
 const LANGS = ["en", "uz", "ru", "it", "ar"];
 // Same in every language on purpose (brand, universal abbreviations, proper nouns).
 const SAME_AS_ENGLISH_OK = new Set([
-  "BookLoop", "OK", "Email", "Google", "km", "ISBN", "Loop Legend", "{{count}}", "",
+  "BookLoop", "OK", "Email", "Google", "km", "ISBN", "Loop Legend", "{{count}}", "", "Spam",
 ]);
 const SAME_AS_ENGLISH_OK_KEYS = [/^common\.appName$/, /^common\.km$/, /\.emailPlaceholder$/];
 // Loanwords that really are the local word ("Password" and "Account" are standard Italian UI terms).

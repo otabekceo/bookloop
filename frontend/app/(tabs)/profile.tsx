@@ -18,6 +18,8 @@ import { useDeviceLocation } from "@/src/location";
 import { enumLabel } from "@/src/i18n/enums";
 import { useLanguage, useLanguageMeta } from "@/src/i18n/LanguageProvider";
 import { makeStyles, useTheme } from "@/src/theme";
+import { INVITE_URL, inviteMessage } from "@/src/invite";
+import { STATS_MARGIN, STAT_CELL_PADDING, STAT_DIVIDER_WIDTH, STAT_VALUE_HEIGHT } from "@/src/profileStats";
 
 export default function Profile() {
   const styles = useStyles();
@@ -31,7 +33,7 @@ export default function Profile() {
   const location = useDeviceLocation();
   const toast = useToast();
   const qc = useQueryClient();
-  const { width } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
   const col = (width - 40 - 14) / 2;
   const [saving, setSaving] = useState(false);
   // A plain closure lock, not just `saving` state: `disabled={saving}` only takes effect after a
@@ -53,6 +55,9 @@ export default function Profile() {
 
   if (!user) return null;
   const books = (booksData?.books || []).slice(0, 4);
+  const bookCount = booksData?.books?.length ?? 0;
+  // The stat value box grows with the system font size, so large text can't clip the numbers.
+  const statValueHeight = { minHeight: STAT_VALUE_HEIGHT * Math.max(1, fontScale) };
 
   const toggleExchanging = async () => {
     if (exchangingLock.current) return; // rapid second tap: ignored, not queued
@@ -77,19 +82,17 @@ export default function Profile() {
     }
   };
 
-  const inviteLink = `${process.env.EXPO_PUBLIC_BACKEND_URL}?ref=${user.user_id}`;
-  const inviteMessage = `📚 Join me on BookLoop — discover readers near you and swap books locally. Bring your reading group into your local loop!\n\n${inviteLink}`;
-
+  // Built at share time, so it is always in the language currently selected in BookLoop.
   const shareInvite = async () => {
     haptic("light");
     try {
-      await Share.share({ message: inviteMessage });
+      await Share.share({ message: inviteMessage(t) });
     } catch {}
   };
 
   const copyInvite = async () => {
     haptic("selection");
-    await Clipboard.setStringAsync(inviteLink);
+    await Clipboard.setStringAsync(INVITE_URL);
     toast(t("profile.inviteCopied"), "success");
   };
 
@@ -100,10 +103,10 @@ export default function Profile() {
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.headerRow}>
-        <Pressable testID="edit-profile-button" onPress={() => router.push("/edit-profile")} style={styles.iconBtn}>
+        <Pressable testID="edit-profile-button" accessibilityRole="button" accessibilityLabel={t("profile.editProfile")} onPress={() => router.push("/edit-profile")} style={styles.iconBtn}>
           <PencilSimple size={20} color={colors.onSurface} />
         </Pressable>
-        <Pressable testID="logout-button" onPress={logout} style={styles.iconBtn}>
+        <Pressable testID="logout-button" accessibilityRole="button" accessibilityLabel={t("profile.logout")} onPress={logout} style={styles.iconBtn}>
           <SignOut size={20} color={colors.error} />
         </Pressable>
       </View>
@@ -157,23 +160,29 @@ export default function Profile() {
           accessibilityRole="button"
           accessibilityLabel={t("profile.receivedReviews")}
         >
-          <RatingPill rating={user.rating} />
-          <AppText variant="caption" color={colors.muted}>
+          <View style={[styles.statValue, statValueHeight]}>
+            <RatingPill rating={user.rating} />
+          </View>
+          <AppText variant="caption" color={colors.muted} style={styles.statLabel}>
             {t("profile.reviewsCount", { count: user.rating_count })}
           </AppText>
         </Pressable>
         <View style={styles.statDivider} />
         <View style={styles.statCell}>
-          <AppText variant="heading">{user.swaps_count}</AppText>
-          <AppText variant="caption" color={colors.muted}>
-            {t("profile.swapsDone")}
+          <View style={[styles.statValue, statValueHeight]}>
+            <AppText variant="heading">{user.swaps_count}</AppText>
+          </View>
+          <AppText variant="caption" color={colors.muted} style={styles.statLabel}>
+            {t("profile.swapsDone", { count: user.swaps_count })}
           </AppText>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statCell}>
-          <AppText variant="heading">{booksData?.books?.length ?? 0}</AppText>
-          <AppText variant="caption" color={colors.muted}>
-            {t("profile.booksCount")}
+          <View style={[styles.statValue, statValueHeight]}>
+            <AppText variant="heading">{bookCount}</AppText>
+          </View>
+          <AppText variant="caption" color={colors.muted} style={styles.statLabel}>
+            {t("profile.booksCount", { count: bookCount })}
           </AppText>
         </View>
       </View>
@@ -214,7 +223,7 @@ export default function Profile() {
           <ShareNetwork size={18} color={colors.onBrandPrimary} weight="fill" />
           <AppText variant="button" color={colors.onBrandPrimary}>{t("profile.shareInvite")}</AppText>
         </Pressable>
-        <Pressable testID="copy-invite" onPress={copyInvite} style={styles.inviteCopy}>
+        <Pressable testID="copy-invite" accessibilityRole="button" accessibilityLabel={t("common.copy")} onPress={copyInvite} style={styles.inviteCopy}>
           <Copy size={18} color={colors.onSurface} />
         </Pressable>
       </View>
@@ -281,7 +290,7 @@ export default function Profile() {
         <View style={styles.tagWrap}>
           {user.languages.map((l) => (
             <View key={l} style={[styles.tag, { backgroundColor: colors.sageSoft }]}>
-              <AppText variant="label" color={colors.brandSecondary}>
+              <AppText variant="label" color={colors.brandSecondaryText}>
                 {enumLabel(t, "bookLanguage", l)}
               </AppText>
             </View>
@@ -421,9 +430,13 @@ const useStyles = makeStyles((colors) => ({
   headerRow: { flexDirection: "row", justifyContent: "flex-end", gap: 10, paddingHorizontal: 20 },
   iconBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
   top: { alignItems: "center", marginTop: 4 },
-  stats: { flexDirection: "row", alignItems: "center", marginHorizontal: 20, marginTop: 20, backgroundColor: colors.surfaceSecondary, borderRadius: 20, paddingVertical: 16, borderWidth: 1, borderColor: colors.border },
-  statCell: { flex: 1, alignItems: "center", gap: 4 },
-  statDivider: { width: 1, height: 32, backgroundColor: colors.border },
+  // See src/profileStats.ts: cells are top-aligned with equal-height value boxes, so the three numbers
+  // stay level however many lines a translated label wraps into. The row direction flips in Arabic.
+  stats: { flexDirection: "row", alignItems: "stretch", marginHorizontal: STATS_MARGIN, marginTop: 20, backgroundColor: colors.surfaceSecondary, borderRadius: 20, paddingVertical: 16, borderWidth: 1, borderColor: colors.border },
+  statCell: { flex: 1, alignItems: "center", justifyContent: "flex-start", gap: 4, paddingHorizontal: STAT_CELL_PADDING },
+  statValue: { justifyContent: "center", alignItems: "center" },
+  statLabel: { textAlign: "center", alignSelf: "stretch" },
+  statDivider: { width: STAT_DIVIDER_WIDTH, marginVertical: 4, backgroundColor: colors.border },
   bio: { marginHorizontal: 20, marginTop: 16 },
   toggleCard: { flexDirection: "row", alignItems: "center", marginHorizontal: 20, marginTop: 16, backgroundColor: colors.surfaceSecondary, borderRadius: 18, padding: 16, borderWidth: 1, borderColor: colors.border },
   switch: { width: 50, height: 30, borderRadius: 15, backgroundColor: colors.surfaceTertiary, padding: 3, justifyContent: "center" },

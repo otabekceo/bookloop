@@ -10,6 +10,7 @@ import { AppText, Avatar, Button, RatingPill, ExchangingDot, EmptyState, Directi
 import { BookTile, Book } from "@/src/components/cards";
 import { BadgeChips } from "@/src/components/badges";
 import { FavoriteButton } from "@/src/components/FavoriteButton";
+import { SafetyMenuButton } from "@/src/components/Safety";
 import { useAuth } from "@/src/auth";
 import type { SwapWith } from "@/src/swapFlow";
 import { apiFetch } from "@/src/api";
@@ -75,7 +76,7 @@ export default function PersonProfile() {
     <View style={styles.root}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <Pressable testID="back-button" onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable testID="back-button" onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button" accessibilityLabel={t("common.back")}>
           <DirectionalIcon>
             <ArrowLeft size={22} color={colors.onSurface} />
           </DirectionalIcon>
@@ -84,7 +85,10 @@ export default function PersonProfile() {
         {isMe || !data ? (
           <View style={{ width: 42 }} />
         ) : (
-          <FavoriteButton userId={id} isFavorite={!!data.user.is_favorite} style={styles.backBtn} />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <FavoriteButton userId={id} isFavorite={!!data.user.is_favorite} style={styles.backBtn} />
+            <SafetyMenuButton userId={id} name={data.user.name} onBlocked={() => router.back()} style={styles.backBtn} />
+          </View>
         )}
       </View>
 

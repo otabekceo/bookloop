@@ -12,13 +12,33 @@ export type Identities = {
   available: Record<Provider, boolean>;
 };
 
-export type LinkResult = { kind: "linked" } | { kind: "error"; code: string } | { kind: "cancelled" } | { kind: "pending" };
+export type LinkResult =
+  | { kind: "linked" }
+  | { kind: "error"; code: string; attempt?: string | null }
+  | { kind: "cancelled" }
+  | { kind: "pending" }
+  /** Google came back: the app still has to confirm the link with its verifier (POST /link/complete). */
+  | { kind: "confirm"; linkId: string; attempt: string };
 
-/** The app URL the backend's Google link flow redirected back to: `?linked=google` or `?link_error=<code>`. */
+function param(url: string, name: string): string | null {
+  const m = url.match(new RegExp(`[?#&]${name}=([^&#]+)`));
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null;
+  }
+}
+
+/** The app URL the backend's Google link flow redirected back to: `?link_id=<id>&attempt=<a>` (to be
+ * confirmed) or `?link_error=<code>&attempt=<a>`. A URL never says "linked" by itself: only the
+ * server's answer to the confirmation does. */
 export function parseLinkResult(url: string): LinkResult {
-  const err = url.match(/[?#&]link_error=([^&#]+)/);
-  if (err) return { kind: "error", code: decodeURIComponent(err[1]) };
-  if (/[?#&]linked=google(?:[&#]|$)/.test(url)) return { kind: "linked" };
+  const attempt = param(url, "attempt");
+  const err = param(url, "link_error");
+  if (err) return { kind: "error", code: err, attempt };
+  const linkId = param(url, "link_id");
+  if (linkId && attempt) return { kind: "confirm", linkId, attempt };
   return { kind: "cancelled" };
 }
 
@@ -36,6 +56,8 @@ const LINK_ERROR_KEYS: Record<string, string> = {
   identity_in_use: "account.errorInUse",
   provider_already_linked: "account.errorAlreadyLinked",
   last_login_method: "account.errorLastMethod",
+  // Native Google (Android): no Google Play services / Google account on the device.
+  google_unavailable: "auth.googleUnavailable",
 };
 
 /** Translation key for a linking error code; anything unknown gets the generic failure. */

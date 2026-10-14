@@ -6,7 +6,9 @@ import * as WebBrowser from "expo-web-browser";
 import { API_BASE, ApiError, apiFetch, clearToken, getToken, saveToken, setMemToken, setUnauthorizedHandler } from "@/src/api";
 import { queryClient } from "@/src/query-client";
 import { unregisterThisDevice } from "@/src/notifications";
-import { appleCredential } from "@/src/socialAuth";
+import { appleCredential, googleNativeCredential } from "@/src/socialAuth";
+import { beginOAuthAttempt, endOAuthAttempt, verifierFor } from "@/src/oauthPending";
+import { parseOAuthReturn } from "@/src/pkce";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -59,6 +61,8 @@ type AuthContextType = {
   completeOnboarding: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
+  /** Native Google sign-in (Android). Resolves false when the user cancelled Google's sheet. */
+  loginWithGoogleNative: () => Promise<boolean>;
   /** Native Sign in with Apple (iOS). Resolves false when the user cancelled the Apple sheet. */
   loginWithApple: () => Promise<boolean>;
   logout: () => Promise<void>;
@@ -73,15 +77,8 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
 
-function extractSessionId(url: string): string | null {
-  const m = url.match(/[?#&]session_id=([^&#]+)/);
-  return m ? decodeURIComponent(m[1]) : null;
-}
-
-// Google sign-in that Google or the backend turned down comes back as `?google_error=...`.
-function hasGoogleError(url: string): boolean {
-  return /[?#&]google_error=/.test(url);
-}
+/** What a URL meant for Google sign-in: signed in, a sign-in of ours that failed, or not ours at all. */
+type GoogleReturn = "ok" | "failed" | "ignored";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -100,9 +97,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStatus("authed");
   }, []);
 
-  /** Exchanges a Google session_id for an app session. Resolves true on success, false on failure. */
+  /** Exchanges a Google session_id (plus this attempt's verifier) for an app session. Resolves true on
+   * success, false on failure. */
   const processSessionId = useCallback(
-    (sid: string): Promise<boolean> => {
+    (sid: string, verifier: string): Promise<boolean> => {
       if (!sid) return Promise.resolve(false);
       const existing = inflight.current.get(sid);
       if (existing) return existing;
@@ -110,7 +108,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           const data = await apiFetch<{ session_token: string; user: User }>("/api/auth/session", {
             method: "POST",
-            body: { session_id: sid },
+            body: { session_id: sid, code_verifier: verifier },
           });
           await applySession(data.session_token, data.user);
           return true;
@@ -122,6 +120,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return p;
     },
     [applySession],
+  );
+
+  /**
+   * Any URL that may be the backend's Google sign-in redirect (browser result, launch link, deep link).
+   * It is only acted on when it carries the `attempt` of the sign-in this app has pending; anything
+   * else (an old attempt, a link someone crafted or shared) is ignored without a word.
+   */
+  const handleGoogleReturn = useCallback(
+    async (url: string): Promise<GoogleReturn> => {
+      const r = parseOAuthReturn(url);
+      if (!r.sessionId && r.googleError === null) return "ignored";
+      const verifier = await verifierFor("login", r.attempt);
+      if (!verifier) return "ignored";
+      if (!r.sessionId) {
+        await endOAuthAttempt("login", r.attempt);
+        return "failed";
+      }
+      const ok = await processSessionId(r.sessionId, verifier);
+      // The ticket is single-use either way: this attempt is over.
+      await endOAuthAttempt("login", r.attempt);
+      return ok ? "ok" : "failed";
+    },
+    [processSessionId],
   );
 
   const refreshUser = useCallback(async () => {
@@ -137,35 +158,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      // A Google sign-in redirect carries a session_id in the URL (web) or the launch link (native).
-      let sid: string | null = null;
-      let googleRejected = false;
-      if (Platform.OS === "web" && typeof window !== "undefined") {
-        const raw = window.location.hash || window.location.search;
-        sid = raw ? extractSessionId(raw) : null;
-        googleRejected = !!raw && hasGoogleError(raw);
-        if (googleRejected) {
+      // A Google sign-in redirect arrives in the URL (web) or the launch link (native, also when Android
+      // restarted the app while the browser was open — the pending verifier is in SecureStore).
+      const web = Platform.OS === "web" && typeof window !== "undefined";
+      const launchUrl = web ? window.location.hash || window.location.search : await Linking.getInitialURL();
+      if (launchUrl) {
+        const r = parseOAuthReturn(launchUrl);
+        const outcome = await handleGoogleReturn(launchUrl);
+        if (web && (r.sessionId || r.googleError !== null)) {
           try {
             window.history.replaceState(window.history.state, "", window.location.pathname);
           } catch {}
         }
-      } else {
-        const initial = await Linking.getInitialURL();
-        sid = initial ? extractSessionId(initial) : null;
-        googleRejected = !!initial && hasGoogleError(initial);
-      }
-      if (googleRejected && mounted) setGoogleError(true);
-      if (sid) {
-        const ok = await processSessionId(sid);
-        if (Platform.OS === "web" && typeof window !== "undefined") {
-          try {
-            window.history.replaceState(window.history.state, "", window.location.pathname);
-          } catch {}
-        }
-        if (ok) return; // applySession already set the user and the "authed" status
-        // Exchange failed: don't hang on the splash screen. Tell the login screen and fall through
+        if (outcome === "ok") return; // applySession already set the user and the "authed" status
+        // Sign-in failed: don't hang on the splash screen. Tell the login screen and fall through
         // to an existing stored session (if any) or the guest state.
-        if (mounted) setGoogleError(true);
+        if (outcome === "failed" && mounted) setGoogleError(true);
       }
 
       // Existing stored session
@@ -196,23 +204,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, [processSessionId]);
+  }, [handleGoogleReturn]);
 
   // Native hot deep links
   useEffect(() => {
     if (Platform.OS === "web") return;
     const sub = Linking.addEventListener("url", ({ url }) => {
-      const sid = extractSessionId(url);
-      if (sid) {
-        processSessionId(sid).then((ok) => {
-          if (!ok) setGoogleError(true);
-        });
-      } else if (hasGoogleError(url)) {
-        setGoogleError(true);
-      }
+      handleGoogleReturn(url).then((outcome) => {
+        if (outcome === "failed") setGoogleError(true);
+      });
     });
     return () => sub.remove();
-  }, [processSessionId]);
+  }, [handleGoogleReturn]);
 
   // Registration: request-otp -> verify-otp -> complete. None of this trusts the client — the
   // backend independently enforces OTP expiry/attempts and the password policy either way.
@@ -272,33 +275,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       Platform.OS === "web" && typeof window !== "undefined"
         ? window.location.origin + "/"
         : Linking.createURL("");
+    // A new attempt: its verifier stays on this device, the backend only sees its SHA-256.
+    const { challenge, attempt } = await beginOAuthAttempt("login");
     // Our own backend runs the Google flow (see /api/auth/google/start in backend/server.py).
-    const authUrl = `${API_BASE}/api/auth/google/start?redirect=${encodeURIComponent(redirectUrl)}`;
+    const authUrl =
+      `${API_BASE}/api/auth/google/start?redirect=${encodeURIComponent(redirectUrl)}` +
+      `&code_challenge=${encodeURIComponent(challenge)}&code_challenge_method=S256`;
     if (Platform.OS === "web") {
       window.location.href = authUrl;
       return;
     }
-    // Register listener before opening
+    // Register listener before opening; only this attempt's return counts.
     let captured: string | null = null;
     const sub = Linking.addEventListener("url", ({ url }) => {
-      if (!captured) captured = url;
+      if (!captured && parseOAuthReturn(url).attempt === attempt) captured = url;
     });
     try {
       const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUrl);
       let url: string | null = null;
       if (result.type === "success" && (result as any).url) url = (result as any).url;
       if (!url && captured) url = captured;
-      if (!url) url = await Linking.getInitialURL();
-      const sid = url ? extractSessionId(url) : null;
-      // No sid and no error means the user closed the browser sheet: nothing to report. A rejected
-      // sign-in, or a sid that fails to exchange, is reported through googleError (shared with the
-      // deep-link listener).
-      if (url && hasGoogleError(url)) setGoogleError(true);
-      else if (sid && !(await processSessionId(sid))) setGoogleError(true);
+      if (!url) {
+        const initial = await Linking.getInitialURL();
+        if (initial && parseOAuthReturn(initial).attempt === attempt) url = initial;
+      }
+      // No return of this attempt means the user closed the browser sheet: nothing to report, and the
+      // attempt is over. A rejected sign-in, or a session_id that fails to exchange, is reported
+      // through googleError (shared with the deep-link listener).
+      const outcome = url ? await handleGoogleReturn(url) : "ignored";
+      if (outcome === "failed") setGoogleError(true);
+      else if (outcome === "ignored") await endOAuthAttempt("login", attempt);
     } finally {
       sub.remove();
     }
-  }, [processSessionId]);
+  }, [handleGoogleReturn]);
+
+  const loginWithGoogleNative = useCallback(async () => {
+    const cred = await googleNativeCredential();
+    if (!cred) return false;
+    // The backend verifies Google's signature, our Web client as audience, our Android app as the
+    // authorized party, expiry, a verified email and its own single-use nonce before anyone is signed in.
+    const data = await apiFetch<{ session_token: string; user: User }>("/api/auth/google/native", { method: "POST", body: cred });
+    await applySession(data.session_token, data.user);
+    return true;
+  }, [applySession]);
 
   const loginWithApple = useCallback(async () => {
     const cred = await appleCredential();
@@ -315,6 +335,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await apiFetch("/api/auth/logout", { method: "POST" });
     } catch {}
     await clearToken();
+    // A Link Google started by this account must not be finished by whoever signs in next.
+    await endOAuthAttempt("link");
     queryClient.clear();
     setUser(null);
     setStatus("guest");
@@ -358,6 +380,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         completeOnboarding,
         login,
         loginWithGoogle,
+        loginWithGoogleNative,
         loginWithApple,
         logout,
         refreshUser,

@@ -89,7 +89,8 @@
     "genresInCommon_two": "{{count}} تصنيفات مشتركة",
     "genresInCommon_few": "{{count}} تصنيفات مشتركة",
     "genresInCommon_many": "{{count}} تصنيفات مشتركة",
-    "genresInCommon_other": "{{count}} تصنيفات مشتركة"
+    "genresInCommon_other": "{{count}} تصنيفات مشتركة",
+    "deletedReader": "قارئ محذوف"
   },
   "languageSelect": {
     "switching": "جارٍ تغيير اللغة…",
@@ -127,6 +128,9 @@
     "fillAllFields": "الرجاء تعبئة جميع الحقول",
     "somethingWentWrong": "حدث خطأ ما",
     "googleFailed": "فشل تسجيل الدخول عبر Google",
+    "googleLinkRequired": "يوجد بالفعل حساب BookLoop بهذا البريد الإلكتروني. سجّل الدخول بكلمة المرور، ثم اربط Google من الملف الشخصي ← الحساب.",
+    "googleAccountMismatch": "حساب BookLoop هذا مرتبط بحساب Google آخر.",
+    "googleUnavailable": "تسجيل الدخول عبر Google غير متاح على هذا الجهاز. تأكد من تحديث خدمات Google Play ومن إضافة حساب Google.",
     "emailAlreadyRegistered": "يوجد حساب بهذا البريد الإلكتروني بالفعل",
     "stepAccount": "الحساب",
     "stepVerify": "التحقق",
@@ -199,7 +203,10 @@
     "language": "اللغة",
     "exchangingOnly": "من يتبادلون حالياً فقط",
     "exchangingOnlyHint": "إظهار الأشخاص المستعدين للتبادل الآن",
-    "showResults": "عرض النتائج"
+    "showResults": "عرض النتائج",
+    "inArea": "القرّاء في {{area}}",
+    "areaDistanceHint": "يتم عرض جميع القرّاء في {{area}}. اختر مسافة للبحث بالقرب منك بدلاً من ذلك.",
+    "clearArea": "العودة إلى القرّاء القريبين"
   },
   "map": {
     "densityTitle": "كثافة المتبادلين النشطين",
@@ -269,6 +276,7 @@
     "hiddenFromDiscovery": "مخفي عن الاكتشاف",
     "inviteTitle": "ادعُ أصدقاءك",
     "inviteBody": "اجلب مجموعة القراءة الخاصة بك إلى الحلقة المحلية",
+    "inviteMessage": "📚 انضم إليّ في BookLoop — اكتشف القرّاء القريبين منك وتبادل الكتب في منطقتك. وادعُ مجموعة القراءة الخاصة بك أيضًا!",
     "shareInvite": "شارك الدعوة",
     "swapBadges": "شارات التبادل",
     "myWishlist": "قائمة رغباتي",
@@ -285,8 +293,18 @@
     "reviewsCount_few": "{{count}} تقييمات",
     "reviewsCount_many": "{{count}} تقييمات",
     "reviewsCount_other": "{{count}} تقييمات",
-    "swapsDone": "مبادلات مكتملة",
-    "booksCount": "كتب",
+    "swapsDone_zero": "مبادلات",
+    "swapsDone_one": "مبادلة",
+    "swapsDone_two": "مبادلتان",
+    "swapsDone_few": "مبادلات",
+    "swapsDone_many": "مبادلة",
+    "swapsDone_other": "مبادلة",
+    "booksCount_zero": "كتب",
+    "booksCount_one": "كتاب",
+    "booksCount_two": "كتابان",
+    "booksCount_few": "كتب",
+    "booksCount_many": "كتابًا",
+    "booksCount_other": "كتاب",
     "editProfile": "تعديل الملف الشخصي",
     "nowExchanging": "أنت الآن تتبادل",
     "exchangingPaused": "تم إيقاف التبادل",
@@ -294,7 +312,8 @@
     "couldNotUpdateExchangeStatus": "تعذّر تحديث حالة التبادل",
     "inviteCopied": "تم نسخ رابط الدعوة",
     "notAcceptingExchanges": "لا تقبل تبادلات جديدة — تبقى الدردشات الحالية مفتوحة",
-    "receivedReviews": "التقييمات التي تلقيتها"
+    "receivedReviews": "التقييمات التي تلقيتها",
+    "logout": "تسجيل الخروج"
   },
   "person": {
     "title": "الملف الشخصي",
@@ -386,7 +405,9 @@
       "completed": "اكتملت المبادلة! اترك تقييمًا.",
       "badgeUnlocked": "🏅 حصل {{name}} على شارة «{{badge}}»!",
       "photo": "📷 صورة",
-      "chatAccepted": "قبل {{name}} الطلب. يمكنكما الدردشة الآن."
+      "chatAccepted": "قبل {{name}} الطلب. يمكنكما الدردشة الآن.",
+      "closed": "تم إغلاق هذا التبادل.",
+      "accountDeleted": "حذف هذا القارئ حسابه."
     },
     "proposalTitle": "اقتراح مبادلة",
     "decline": "رفض",
@@ -426,7 +447,9 @@
     "acceptSwap": "قبول التبادل",
     "acceptToChat": "اقبل لمتابعة الدردشة",
     "send": "إرسال",
-    "sendPhoto": "إرسال صورة"
+    "sendPhoto": "إرسال صورة",
+    "photoLabel": "صورة",
+    "photoRemoved": "تمت إزالة الصورة"
   },
   "reviews": {
     "title": "التقييمات",
@@ -437,7 +460,13 @@
     "bookLoopMember": "عضو في BookLoop",
     "postAnonymously": "النشر دون الكشف عن الهوية",
     "anonymousOffHint": "سيظهر اسمك وصورتك مع التقييم",
-    "anonymousOnHint": "سيظهر باسم «عضو في BookLoop» — لن يرى الآخرون من كتبه"
+    "anonymousOnHint": "سيظهر باسم «عضو في BookLoop» — لن يرى الآخرون من كتبه",
+    "starsLabel_zero": "{{count}} نجوم",
+    "starsLabel_one": "نجمة واحدة",
+    "starsLabel_two": "نجمتان",
+    "starsLabel_few": "{{count}} نجوم",
+    "starsLabel_many": "{{count}} نجمة",
+    "starsLabel_other": "{{count}} نجمة"
   },
   "wishlist": {
     "title": "قائمة الرغبات",
@@ -479,7 +508,8 @@
     "permissionNeeded": "الإذن مطلوب",
     "uploadFailed": "فشل الرفع",
     "profileUpdated": "تم تحديث الملف الشخصي",
-    "couldNotSave": "تعذّر الحفظ"
+    "couldNotSave": "تعذّر الحفظ",
+    "changePhoto": "تغيير صورة الملف الشخصي"
   },
   "badges": {
     "names": {
@@ -559,7 +589,7 @@
     "noResultsHint": "جرّب تعديل عوامل التصفية."
   },
   "location": {
-    "within100m": "ضمن 100 م",
+    "within1km": "ضمن 1 كم",
     "notSet": "الموقع غير محدد",
     "detected": "تم تحديد الموقع",
     "locating": "جارٍ تحديد موقعك…",
@@ -664,7 +694,12 @@
     "onlyRecipient": "لا يقبل الطلب إلا القارئ الذي استلمه",
     "cannotFavoriteSelf": "لا يمكنك إضافة نفسك إلى المفضلة",
     "chooseBothBooks": "اختر الكتابين معاً أو لا شيء",
-    "invalidPushToken": "تعذّر تسجيل هذا الجهاز للإشعارات"
+    "invalidPushToken": "تعذّر تسجيل هذا الجهاز للإشعارات",
+    "blocked": "لا يمكنك التفاعل مع هذا القارئ.",
+    "cannotBlockSelf": "لا يمكنك حظر نفسك.",
+    "invalidImageUrl": "يرجى رفع الصورة عبر BookLoop.",
+    "unsupportedImage": "يرجى رفع صورة بصيغة JPEG أو PNG أو WebP.",
+    "tooManySignInAttempts": "محاولات تسجيل دخول كثيرة. حاول مرة أخرى بعد بضع دقائق."
   },
   "proposal": {
     "title": "عرض جديد",
@@ -756,6 +791,49 @@
     "errorInUse": "هذا الحساب مرتبط بالفعل بملف BookLoop آخر",
     "errorAlreadyLinked": "يوجد حساب آخر من هذا المزوّد مرتبط بالفعل — ألغِ ربطه أولاً",
     "errorLastMethod": "هذه طريقتك الوحيدة لتسجيل الدخول، لذا لا يمكن إزالتها",
-    "lastMethodHint": "تبقى لديك دائماً طريقة واحدة على الأقل لتسجيل الدخول."
+    "lastMethodHint": "تبقى لديك دائماً طريقة واحدة على الأقل لتسجيل الدخول.",
+    "deleteTitle": "حذف الحساب",
+    "deleteBody": "يحذف نهائيًا ملفك الشخصي وكتبك وصورك ومفضلتك والمراجعات التي تلقيتها. تبقى المراجعات التي كتبتها بدون اسمك، ويحتفظ القرّاء الذين تبادلت معهم بالمحادثات بعد إزالة اسمك. لا يمكن التراجع عن ذلك.",
+    "deleteButton": "حذف حسابي",
+    "deleteConfirmTitle": "هل تريد حذف حسابك؟",
+    "deleteConfirmBody": "سيتم حذف ملفك الشخصي وكتبك وصورك نهائيًا وإغلاق التبادلات المفتوحة. لا يمكن التراجع عن ذلك.",
+    "deleted": "تم حذف حسابك",
+    "deleteFailed": "تعذّر حذف حسابك. حاول مرة أخرى."
+  },
+  "safety": {
+    "moreActions": "إجراءات أخرى",
+    "reportTitle": {
+      "user": "الإبلاغ عن القارئ",
+      "book": "الإبلاغ عن الإعلان",
+      "review": "الإبلاغ عن المراجعة",
+      "message": "الإبلاغ عن الرسالة",
+      "swap": "الإبلاغ عن التبادل"
+    },
+    "reasonPrompt": "ما المشكلة؟",
+    "reasons": {
+      "spam": "رسائل مزعجة",
+      "harassment": "تحرش أو تنمر",
+      "inappropriate": "محتوى غير لائق",
+      "fraud": "احتيال أو إعلان مزيف",
+      "safety": "مخاوف تتعلق بالسلامة",
+      "other": "سبب آخر"
+    },
+    "detailsPlaceholder": "أضف تفاصيل (اختياري)",
+    "reportPrivacy": "يراجع فريق BookLoop البلاغات. لا يُخبَر القارئ بمن أبلغ عنه.",
+    "sendReport": "إرسال البلاغ",
+    "reportSent": "شكرًا — تم إرسال بلاغك",
+    "reportFailed": "تعذّر إرسال البلاغ. حاول مرة أخرى.",
+    "block": "حظر",
+    "blockName": "حظر {{name}}",
+    "blockTitle": "هل تريد حظر {{name}}؟",
+    "blockBody": "لن يرى أحدكما الآخر في الاستكشاف أو على الخريطة، ولن يتمكن أي منكما من المراسلة أو اقتراح تبادل. سيتم إغلاق التبادلات المفتوحة بينكما. يمكنك إلغاء الحظر من الإعدادات.",
+    "blockedToast": "تم حظر {{name}}",
+    "blockFailed": "حدث خطأ ما. حاول مرة أخرى.",
+    "blockedReaders": "القرّاء المحظورون",
+    "blockedHint": "لا يمكن للقرّاء المحظورين رؤية ملفك الشخصي أو كتبك أو مراسلتك.",
+    "noBlocked": "لم تحظر أي شخص",
+    "unblock": "إلغاء الحظر",
+    "unblockName": "إلغاء حظر {{name}}",
+    "unblockedToast": "تم إلغاء حظر {{name}}"
   }
 }

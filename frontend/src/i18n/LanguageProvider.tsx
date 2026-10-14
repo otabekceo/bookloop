@@ -16,7 +16,7 @@ import i18n, {
   persistLanguage,
 } from "./index";
 import { syncNativeDirection, waitForBootReloadFallback, waitForOverlayPaint } from "./direction";
-import { createLanguageSwitcher } from "./languageSwitch";
+import { createLanguagePreview, createLanguageSwitcher } from "./languageSwitch";
 import {
   getLanguageMeta,
   isLanguageCode,
@@ -37,6 +37,12 @@ type LanguageContextType = {
   isSwitching: boolean;
   /** Change the app language. Persists locally and (when authed) server-side. */
   setLanguage: (code: LanguageCode) => Promise<void>;
+  /**
+   * First-run picker: make `code` the active language immediately (the screen re-renders in it, and the
+   * layout direction follows) WITHOUT saving it or completing the selection. Continue then calls
+   * `setLanguage` with the same code. The newest call always wins.
+   */
+  previewLanguage: (code: LanguageCode) => Promise<void>;
   /**
    * Adopt a language coming from the signed-in user's server profile.
    * Unlike `setLanguage`, this does not mark the user as having made an
@@ -152,7 +158,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   // The switching flow (save first -> apply -> overlay + reload only if LTR <-> RTL changes -> ignore
   // repeated taps) lives in ./languageSwitch.ts; this wires in the real storage, i18n, state and reload.
   const switcherRef = useRef<ReturnType<typeof createLanguageSwitcher> | null>(null);
-  if (!switcherRef.current) {
+  if (switcherRef.current == null) {
     switcherRef.current = createLanguageSwitcher({
       persist: (code) => persistLanguage(code as LanguageCode),
       applyLanguage: async (code) => {
@@ -173,6 +179,17 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     userChoseRef.current = true;
     await switcherRef.current!(code);
   }, []);
+
+  // Preview = the same i18n + state update the switcher applies, minus persisting, finishing the
+  // selection and the native direction (so no reload while the user is still choosing).
+  const previewRef = useRef<ReturnType<typeof createLanguagePreview> | null>(null);
+  if (previewRef.current == null) {
+    previewRef.current = createLanguagePreview(async (code) => {
+      await i18n.changeLanguage(code);
+      setLanguageState(code as LanguageCode);
+    });
+  }
+  const previewLanguage = useCallback((code: LanguageCode) => previewRef.current!(code), []);
 
   const syncFromServer = useCallback(
     async (code: string | null | undefined) => {
@@ -212,10 +229,11 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       needsSelection,
       isSwitching,
       setLanguage,
+      previewLanguage,
       syncFromServer,
       t,
     }),
-    [language, isReady, needsSelection, isSwitching, setLanguage, syncFromServer, t],
+    [language, isReady, needsSelection, isSwitching, setLanguage, previewLanguage, syncFromServer, t],
   );
 
   return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;

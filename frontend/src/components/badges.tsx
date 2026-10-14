@@ -30,8 +30,8 @@ export function BadgeChips({ badges }: { badges?: Badge[] }) {
     <View style={styles.chipWrap}>
       {earned.map((b) => (
         <View key={b.id} testID={`badge-chip-${b.id}`} style={styles.chip}>
-          <BadgeIcon id={b.id} size={14} color={colors.onBrandTertiary} />
-          <AppText variant="caption" color={colors.onBrandTertiary}>
+          <BadgeIcon id={b.id} size={14} color={colors.onAccentSoft} />
+          <AppText variant="caption" color={colors.onAccentSoft}>
             {badgeLabel(t, b)}
           </AppText>
         </View>
@@ -52,7 +52,7 @@ export function BadgeGrid({ badges, swapsCount }: { badges: Badge[]; swapsCount:
         {badges.map((b) => (
           <View key={b.id} testID={`badge-${b.id}-${b.earned ? "earned" : "locked"}`} style={styles.cell}>
             <View style={[styles.circle, b.earned ? styles.circleOn : styles.circleOff]}>
-              <BadgeIcon id={b.id} size={22} color={b.earned ? colors.onBrandPrimary : colors.muted} weight={b.earned ? "fill" : "regular"} />
+              <BadgeIcon id={b.id} size={22} color={b.earned ? colors.onAccent : colors.muted} weight={b.earned ? "fill" : "regular"} />
             </View>
             <AppText variant="caption" color={b.earned ? colors.onSurface : colors.muted} style={{ textAlign: "center" }} numberOfLines={2}>
               {badgeLabel(t, b)}
@@ -71,10 +71,10 @@ export function BadgeGrid({ badges, swapsCount }: { badges: Badge[]; swapsCount:
 
 const useStyles = makeStyles((colors) => ({
   chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6, justifyContent: "center" },
-  chip: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: colors.brandTertiary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  chip: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: colors.accentSoft, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
   grid: { flexDirection: "row", gap: 10 },
   cell: { flex: 1, alignItems: "center", gap: 6 },
   circle: { width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center" },
-  circleOn: { backgroundColor: colors.brandPrimary },
+  circleOn: { backgroundColor: colors.accent },
   circleOff: { backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
 }));

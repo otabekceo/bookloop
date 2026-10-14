@@ -91,7 +91,7 @@ export default function Wishlist() {
     <View style={styles.root}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <Pressable testID="back-button" onPress={() => router.back()} style={styles.iconBtn}>
+        <Pressable testID="back-button" accessibilityRole="button" accessibilityLabel={t("common.back")} onPress={() => router.back()} style={styles.iconBtn}>
           <DirectionalIcon>
             <ArrowLeft size={22} color={colors.onSurface} />
           </DirectionalIcon>
@@ -127,7 +127,7 @@ export default function Wishlist() {
               ))}
               {languages.map((l) => (
                 <View key={l} style={[styles.tag, { backgroundColor: colors.sageSoft }]}>
-                  <AppText variant="caption" color={colors.brandSecondary}>{enumLabel(t, "bookLanguage", l)}</AppText>
+                  <AppText variant="caption" color={colors.brandSecondaryText}>{enumLabel(t, "bookLanguage", l)}</AppText>
                 </View>
               ))}
               {interests.map((i) => (

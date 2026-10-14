@@ -44,10 +44,10 @@ export default function Welcome() {
   return (
     <View style={styles.root}>
       {/* Atmospheric depth without a stock photo: a soft radial glow, derived from the active theme's
-          own brand colors (Terracotta+Sage in light, the single brand green in dark) rather than a
+          own accent colors (Terracotta+Sage in light, the single brand green in dark) rather than a
           hardcoded hex — so dark mode never gets an orange-tinted glow. */}
       <LinearGradient
-        colors={[withOpacity(colors.brand, 0.14), "transparent"]}
+        colors={[withOpacity(colors.accent, 0.14), "transparent"]}
         style={[styles.glow, { top: -80, right: -60 }]}
       />
       <LinearGradient

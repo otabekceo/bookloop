@@ -24,6 +24,8 @@ export function badgeLabel(t: Translate, b: { id: string; label: string }): stri
 export function renderKeyed(t: Translate, m: KeyedText): string {
   if (m.key && i18n.exists(m.key)) {
     const params: Record<string, any> = { ...(m.params || {}) };
+    // A reader who deleted their account: the server removed their name from these lines.
+    if (params.deleted) params.name = t("common.deletedReader");
     // Badges travel as ids; their display names are translated here.
     if (typeof params.badge === "string" && i18n.exists(`badges.names.${params.badge}`)) {
       params.badge = t(`badges.names.${params.badge}`);

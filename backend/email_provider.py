@@ -90,7 +90,12 @@ def get_email_provider() -> EmailProvider:
 
 
 def otp_email_body(name: str, code: str) -> tuple[str, str, str]:
-    """Returns (subject, html, text) for a registration OTP email."""
+    """Returns (subject, html, text) for a registration OTP email. `name` is whatever the requester typed
+    and the email can be requested for anyone's address, so it is one plain line and HTML-escaped: it can
+    never add markup, links or extra lines to a mail sent in BookLoop's name."""
+    from html import escape
+
+    name = " ".join((name or "").split()) or "there"
     subject = "Your BookLoop verification code"
     text = (
         f"Hi {name},\n\n"
@@ -102,16 +107,51 @@ def otp_email_body(name: str, code: str) -> tuple[str, str, str]:
     html = f"""
     <div style="font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto;
                 background: #F7F4EE; padding: 32px 28px; border-radius: 16px;">
-      <p style="color:#17211F; font-size:16px; margin:0 0 16px;">Hi {name},</p>
+      <p style="color:#17211F; font-size:16px; margin:0 0 16px;">Hi {escape(name)},</p>
       <p style="color:#17211F; font-size:15px; line-height:1.5; margin:0 0 24px;">
         Your BookLoop verification code is:
       </p>
       <div style="font-size:32px; font-weight:700; letter-spacing:8px; color:#D96C4A;
-                  text-align:center; margin:0 0 24px;">{code}</div>
+                  text-align:center; margin:0 0 24px;">{escape(code)}</div>
       <p style="color:#707775; font-size:13px; line-height:1.5; margin:0;">
         This code expires in 10 minutes and can only be used once.
         If you didn't request this, you can safely ignore this email.
       </p>
+      <p style="color:#707775; font-size:13px; margin:24px 0 0;">— BookLoop</p>
+    </div>
+    """
+    return subject, html, text
+
+
+_PROVIDER_NAMES = {"google": "Google", "apple": "Apple"}
+
+
+def security_email_body(name: str, event: str, provider: str, provider_email: Optional[str]) -> tuple[str, str, str]:
+    """Returns (subject, html, text) for a sign-in method change notice ("linked", "signin_linked",
+    "unlinked"). Every interpolated value is escaped: names and addresses come from users and providers."""
+    from html import escape
+
+    p = _PROVIDER_NAMES.get(provider, provider)
+    which = f"{p} account {provider_email}" if provider_email else f"{p} account"
+    if event == "unlinked":
+        subject = f"{p} sign-in was removed from your BookLoop account"
+        what = f"{p} was removed as a way to sign in to your BookLoop account."
+        advice = "If this wasn't you, change your password now."
+    else:
+        subject = f"A {p} account was linked to your BookLoop account"
+        what = (f"The {which} was linked to your BookLoop account and can now be used to sign in."
+                if event == "linked" else
+                f"Someone signed in to your BookLoop account with the {which} for the first time. "
+                f"That {p} account can now be used to sign in.")
+        advice = f"If this wasn't you, remove {p} in Profile -> Account and change your password."
+    greeting = f"Hi {name}," if name else "Hi,"
+    text = f"{greeting}\n\n{what}\n\n{advice}\n\n— BookLoop"
+    html = f"""
+    <div style="font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto;
+                background: #F7F4EE; padding: 32px 28px; border-radius: 16px;">
+      <p style="color:#17211F; font-size:16px; margin:0 0 16px;">{escape(greeting)}</p>
+      <p style="color:#17211F; font-size:15px; line-height:1.5; margin:0 0 16px;">{escape(what)}</p>
+      <p style="color:#707775; font-size:13px; line-height:1.5; margin:0;">{escape(advice)}</p>
       <p style="color:#707775; font-size:13px; margin:24px 0 0;">— BookLoop</p>
     </div>
     """

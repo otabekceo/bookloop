@@ -65,7 +65,8 @@
     "genreCount_other": "{{count}} genres",
     "inCommon": "{{count}} in common",
     "genresInCommon_one": "{{count}} genre in common",
-    "genresInCommon_other": "{{count}} genres in common"
+    "genresInCommon_other": "{{count}} genres in common",
+    "deletedReader": "Deleted reader"
   },
   "languageSelect": {
     "switching": "Switching language…",
@@ -77,7 +78,7 @@
     "current": "Current language"
   },
   "appearance": {
-    "title": "Appearance",
+    "title": "Theme",
     "subtitle": "Choose how BookLoop looks. You can change this any time.",
     "system": "System",
     "systemHint": "Use device settings",
@@ -175,7 +176,10 @@
     "language": "Language",
     "exchangingOnly": "Currently exchanging only",
     "exchangingOnlyHint": "Show people ready to swap right now",
-    "showResults": "Show results"
+    "showResults": "Show results",
+    "inArea": "Readers in {{area}}",
+    "areaDistanceHint": "Showing everyone in {{area}}. Pick a distance to search near you instead.",
+    "clearArea": "Back to readers near me"
   },
   "map": {
     "densityTitle": "Active exchanger density",
@@ -229,6 +233,7 @@
     "hiddenFromDiscovery": "Hidden from discovery",
     "inviteTitle": "Invite friends",
     "inviteBody": "Bring your reading group into your local loop",
+    "inviteMessage": "📚 Join me on BookLoop — discover readers near you and swap books locally. Bring your reading group into your local loop!",
     "shareInvite": "Share invite",
     "swapBadges": "Swap badges",
     "myWishlist": "My wishlist",
@@ -241,8 +246,10 @@
     "addBook": "Add a book",
     "reviewsCount_one": "{{count}} review",
     "reviewsCount_other": "{{count}} reviews",
-    "swapsDone": "swaps done",
-    "booksCount": "books",
+    "swapsDone_one": "swap done",
+    "swapsDone_other": "swaps done",
+    "booksCount_one": "book",
+    "booksCount_other": "books",
     "editProfile": "Edit profile",
     "nowExchanging": "You're now exchanging",
     "exchangingPaused": "Exchanging paused",
@@ -250,7 +257,8 @@
     "couldNotUpdateExchangeStatus": "Couldn't update exchange status",
     "inviteCopied": "Invite link copied",
     "notAcceptingExchanges": "Not accepting new exchanges — existing chats stay open",
-    "receivedReviews": "Reviews you received"
+    "receivedReviews": "Reviews you received",
+    "logout": "Log out"
   },
   "person": {
     "title": "Profile",
@@ -338,7 +346,9 @@
       "completed": "Swap completed! Leave a rating.",
       "badgeUnlocked": "🏅 {{name}} unlocked the {{badge}} badge!",
       "photo": "📷 Photo",
-      "chatAccepted": "{{name}} accepted the request. You can chat now."
+      "chatAccepted": "{{name}} accepted the request. You can chat now.",
+      "closed": "This swap was closed.",
+      "accountDeleted": "This reader deleted their account."
     },
     "proposalTitle": "Swap proposal",
     "decline": "Decline",
@@ -378,7 +388,9 @@
     "acceptSwap": "Accept swap",
     "acceptToChat": "Accept to continue chatting",
     "send": "Send",
-    "sendPhoto": "Send a photo"
+    "sendPhoto": "Send a photo",
+    "photoLabel": "Photo",
+    "photoRemoved": "Photo removed"
   },
   "reviews": {
     "title": "Reviews",
@@ -389,7 +401,9 @@
     "bookLoopMember": "BookLoop member",
     "postAnonymously": "Post anonymously",
     "anonymousOffHint": "Your name and photo will be shown with the review",
-    "anonymousOnHint": "Shown as “BookLoop member” — others won’t see who wrote it"
+    "anonymousOnHint": "Shown as “BookLoop member” — others won’t see who wrote it",
+    "starsLabel_one": "{{count}} star",
+    "starsLabel_other": "{{count}} stars"
   },
   "wishlist": {
     "title": "Wishlist",
@@ -427,7 +441,8 @@
     "permissionNeeded": "Permission needed",
     "uploadFailed": "Upload failed",
     "profileUpdated": "Profile updated",
-    "couldNotSave": "Could not save"
+    "couldNotSave": "Could not save",
+    "changePhoto": "Change profile photo"
   },
   "badges": {
     "names": {
@@ -491,7 +506,7 @@
     "noResultsHint": "Try adjusting your filters."
   },
   "location": {
-    "within100m": "Within 100 m",
+    "within1km": "Within 1 km",
     "notSet": "Location not set",
     "detected": "Location detected",
     "locating": "Finding your location…",
@@ -596,7 +611,12 @@
     "onlyRecipient": "Only the reader who received the request can accept it",
     "cannotFavoriteSelf": "You can’t add yourself to favorites",
     "chooseBothBooks": "Choose both books, or neither",
-    "invalidPushToken": "This device could not be registered for notifications"
+    "invalidPushToken": "This device could not be registered for notifications",
+    "blocked": "You can't interact with this reader.",
+    "cannotBlockSelf": "You can't block yourself.",
+    "invalidImageUrl": "Please upload the image through BookLoop.",
+    "unsupportedImage": "Please upload a JPEG, PNG or WebP image.",
+    "tooManySignInAttempts": "Too many sign-in attempts. Please try again in a few minutes."
   },
   "proposal": {
     "title": "New proposal",
@@ -672,6 +692,49 @@
     "errorInUse": "That account is already linked to a different BookLoop profile",
     "errorAlreadyLinked": "A different account of this provider is already linked — unlink it first",
     "errorLastMethod": "This is your only way to sign in, so it can’t be removed",
-    "lastMethodHint": "You always keep at least one way to sign in."
+    "lastMethodHint": "You always keep at least one way to sign in.",
+    "deleteTitle": "Delete account",
+    "deleteBody": "Permanently deletes your profile, books, photos, favorites and the reviews you received. Reviews you wrote stay without your name, and readers you swapped with keep their conversations with your name removed. This can't be undone.",
+    "deleteButton": "Delete my account",
+    "deleteConfirmTitle": "Delete your account?",
+    "deleteConfirmBody": "Your profile, books and photos will be permanently deleted and open swaps will be closed. This can't be undone.",
+    "deleted": "Your account was deleted",
+    "deleteFailed": "Couldn't delete your account. Please try again."
+  },
+  "safety": {
+    "moreActions": "More actions",
+    "reportTitle": {
+      "user": "Report reader",
+      "book": "Report listing",
+      "review": "Report review",
+      "message": "Report message",
+      "swap": "Report swap"
+    },
+    "reasonPrompt": "What's the problem?",
+    "reasons": {
+      "spam": "Spam",
+      "harassment": "Harassment or bullying",
+      "inappropriate": "Inappropriate content",
+      "fraud": "Scam or fake listing",
+      "safety": "Safety concern",
+      "other": "Something else"
+    },
+    "detailsPlaceholder": "Add details (optional)",
+    "reportPrivacy": "The BookLoop team reviews reports. The reader isn't told who reported them.",
+    "sendReport": "Send report",
+    "reportSent": "Thanks — your report was sent",
+    "reportFailed": "Couldn't send the report. Please try again.",
+    "block": "Block",
+    "blockName": "Block {{name}}",
+    "blockTitle": "Block {{name}}?",
+    "blockBody": "You won't see each other in Discover or on the map, and neither of you can message or propose swaps. Open swaps between you will be closed. You can unblock them in Settings.",
+    "blockedToast": "{{name}} is blocked",
+    "blockFailed": "Something went wrong. Please try again.",
+    "blockedReaders": "Blocked readers",
+    "blockedHint": "Blocked readers can't see your profile or books, or message you.",
+    "noBlocked": "You haven't blocked anyone",
+    "unblock": "Unblock",
+    "unblockName": "Unblock {{name}}",
+    "unblockedToast": "{{name}} is unblocked"
   }
 }

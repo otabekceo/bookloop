@@ -3,9 +3,11 @@
 // and shared components only ever read `colors.<token>`; which theme those tokens resolve to is
 // decided centrally here and in src/appearance.tsx, never with `isDark ? "#.." : "#.."` in a screen.
 //
-// Light keeps BookLoop's original warm palette. Dark uses the authoritative palette below — it is a
-// deliberately DIFFERENT color language (deep botanical green, not a black/orange restyle of light):
-// Terracotta is a light-mode color and is not forced into dark mode.
+// Light keeps BookLoop's warm palette with Deep Ink green (#17211F) as the one primary interactive
+// color: buttons, active/selected states, links, nav, focus. Terracotta is a light-mode ACCENT only
+// (`accent*` tokens: status/demand/achievement badges, decorative glow) — never a primary action.
+// Dark uses the authoritative palette below — a deliberately DIFFERENT color language (deep botanical
+// green, not a black/orange restyle of light): Terracotta is not forced into dark mode.
 
 import { useMemo } from "react";
 import { Appearance, StyleSheet, useColorScheme } from "react-native";
@@ -22,28 +24,38 @@ const light = {
   onSurfaceTertiary: "#17211F",
   surfaceInverse: "#17211F", // Deep Ink surfaces, tooltips
   onSurfaceInverse: "#F7F4EE",
-  muted: "#707775", // captions, timestamps, placeholders
+  muted: "#646B69", // captions, timestamps, placeholders — ≥4.5:1 on every light surface (WCAG AA)
 
   // Brand
-  brand: "#D96C4A", // Terracotta
+  brand: "#17211F", // Deep Ink — BookLoop's primary brand green (focus rings, active borders)
   onBrand: "#FFFFFF",
-  brandPrimary: "#D96C4A", // primary CTA, swap actions, active states
+  brandPrimary: "#17211F", // primary CTA, swap actions, links, active nav/states
   onBrandPrimary: "#FFFFFF",
-  brandSecondary: "#879B7A", // Sage — available/exchanging, positive, location
-  onBrandSecondary: "#FFFFFF",
-  brandTertiary: "#F2E8E3", // soft terracotta wash for tags/badges/selected chips
-  onBrandTertiary: "#D96C4A",
+  brandSecondary: "#879B7A", // Sage — available/exchanging, positive, location (fills, icons, dots)
+  onBrandSecondary: "#17211F", // Deep Ink on Sage: 5.5:1 (white on Sage is only 3.0:1)
+  // Sage as TEXT (e.g. "Linked", "Available"): Sage itself is 2.7–3.0:1 on light surfaces, too faint
+  // for text. Same hue, darkened to ≥5:1. Fills and icons keep brandSecondary.
+  brandSecondaryText: "#56684B",
+  brandTertiary: "#E7ECE3", // soft sage wash — selected chips/rows/filters, tags
+  onBrandTertiary: "#17211F",
+
+  // Accent — Terracotta, for semantic/decorative emphasis only (Reserved status, "wanted" demand,
+  // earned badges, welcome glow). Never a primary action or selected state.
+  accent: "#D96C4A",
+  onAccent: "#FFFFFF",
+  accentSoft: "#F2E8E3",
+  onAccentSoft: "#A84A2C", // Terracotta, darkened for TEXT on the soft wash: 4.7:1 (#D96C4A is 2.8:1)
 
   // Status
   success: "#879B7A",
-  onSuccess: "#FFFFFF",
+  onSuccess: "#17211F",
   warning: "#E8A365",
   onWarning: "#17211F",
   error: "#B33939",
   onError: "#FFFFFF",
   info: "#707775",
   onInfo: "#FFFFFF",
-  rating: "#E8A365", // rating stars
+  rating: "#B8722A", // rating stars — 3.8:1 on white (non-text minimum is 3:1; #E8A365 was 2.1:1)
   notification: "#B33939", // notification dots/alert indicators — distinct from generic `error`
 
   // Lines
@@ -88,8 +100,15 @@ const dark = {
   onBrandPrimary: "#0B1512",
   brandSecondary: "#4E9E76", // exchanging/positive/location — same green, not a second hue
   onBrandSecondary: "#0B1512",
+  brandSecondaryText: "#4E9E76", // 5.1–5.7:1 on dark surfaces already
   brandTertiary: "#1E3229", // GREEN TINT — ACTIVE BACKGROUND (selected chips/filters/rows)
   onBrandTertiary: "#4E9E76", // exact pairing specified for selected/active state text
+
+  // Accent — no Terracotta in dark: the same green/tint pairing the brand tokens use.
+  accent: "#4E9E76",
+  onAccent: "#0B1512",
+  accentSoft: "#1E3229",
+  onAccentSoft: "#4E9E76",
 
   // Status
   success: "#4E9E76",
@@ -97,7 +116,7 @@ const dark = {
   warning: "#F0B93E",
   onWarning: "#0B1512",
   error: "#E8503A",
-  onError: "#FFFFFF",
+  onError: "#0B1512", // dark ink on the alert red: 5.0:1 (white was 3.7:1)
   info: "#8FA098",
   onInfo: "#0B1512",
   rating: "#F0B93E", // GOLD — rating stars ONLY, never a generic accent

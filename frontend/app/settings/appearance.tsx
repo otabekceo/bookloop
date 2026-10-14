@@ -40,7 +40,7 @@ export default function AppearanceSettings() {
     <View style={styles.root}>
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
         <AppText variant="heading">{t("appearance.title")}</AppText>
-        <Pressable testID="appearance-close" onPress={() => router.back()} hitSlop={10} style={styles.closeBtn}>
+        <Pressable testID="appearance-close" accessibilityRole="button" accessibilityLabel={t("common.close")} onPress={() => router.back()} hitSlop={10} style={styles.closeBtn}>
           <X size={20} color={colors.onSurface} />
         </Pressable>
       </View>

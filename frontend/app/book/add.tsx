@@ -146,7 +146,7 @@ export default function AddBook() {
     <View style={styles.root}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <Pressable testID="close-add-book" onPress={() => router.back()} style={styles.iconBtn}>
+        <Pressable testID="close-add-book" accessibilityRole="button" accessibilityLabel={t("common.close")} onPress={() => router.back()} style={styles.iconBtn}>
           <X size={22} color={colors.onSurface} />
         </Pressable>
         <AppText variant="heading">{t("addBook.title")}</AppText>

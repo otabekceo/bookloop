@@ -4,6 +4,9 @@
 .idea/
 .vscode/
 
+# Firebase Android configuration
+/frontend/google-services.json
+
 # Dependencies
 node_modules/
 /node_modules
@@ -85,6 +88,10 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+# Signing keys and server credentials (the repository is public)
+*.keystore
+*firebase-adminsdk*.json
+service-account*.json
 
 # Uploaded images (local file storage)
 backend/uploads/

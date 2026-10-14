@@ -4,7 +4,7 @@
     "slug": "bookloop",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/bookloop-icon.png",
     "scheme": "bookloop",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -19,10 +19,11 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "foregroundImage": "./assets/images/bookloop-logo-android.png",
         "backgroundColor": "#F7F4EE"
       },
       "package": "com.otabekceo.bookloop",
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -83,6 +84,7 @@
       "expo-font",
       "expo-image",
       "expo-apple-authentication",
+      "react-native-nitro-google-signin",
       "expo-secure-store",
       "expo-web-browser",
       "expo-status-bar",

@@ -56,13 +56,20 @@ const CODES: Record<string, string> = {
   proposal_limit: "apiErrors.proposalLimit",
   only_recipient: "apiErrors.onlyRecipient",
   cannot_favorite_self: "apiErrors.cannotFavoriteSelf",
+  blocked: "apiErrors.blocked",
+  cannot_block_self: "apiErrors.cannotBlockSelf",
+  invalid_image_url: "apiErrors.invalidImageUrl",
+  unsupported_image: "apiErrors.unsupportedImage",
+  too_many_attempts: "apiErrors.tooManySignInAttempts",
 };
 
 /** Translated text for a coded error this map knows, otherwise undefined. */
 export function localizeApiErrorCode(code: string | undefined, path: string): string | undefined {
   if (!code || !CODES[code]) return undefined;
-  // "rate_limited" is also a registration/OTP code, which those screens translate themselves.
-  if (code === "rate_limited" && !path.startsWith("/api/swaps")) return undefined;
+  // "rate_limited" and "too_many_attempts" are also registration/OTP codes, which those screens
+  // translate themselves; elsewhere (chat, uploads, reports, blocks, location, sign-in) they're ours.
+  if (code === "rate_limited" && path.startsWith("/api/auth")) return undefined;
+  if (code === "too_many_attempts" && path !== "/api/auth/login") return undefined;
   return i18n.t(CODES[code]);
 }
 

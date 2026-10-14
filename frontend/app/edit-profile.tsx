@@ -81,7 +81,7 @@ export default function EditProfile() {
     <View style={styles.root}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
-        <Pressable testID="close-edit" onPress={() => router.back()} style={styles.iconBtn}>
+        <Pressable testID="close-edit" accessibilityRole="button" accessibilityLabel={t("common.close")} onPress={() => router.back()} style={styles.iconBtn}>
           <X size={22} color={colors.onSurface} />
         </Pressable>
         <AppText variant="heading">{t("editProfile.title")}</AppText>
@@ -90,7 +90,7 @@ export default function EditProfile() {
 
       <KeyboardAwareScrollView contentContainerStyle={{ padding: 20, gap: 18, paddingBottom: 40 }} bottomOffset={90} showsVerticalScrollIndicator={false}>
         <View style={{ alignItems: "center", gap: 10 }}>
-          <Pressable testID="pick-avatar" onPress={() => pickAvatar("library")} style={styles.avatarWrap}>
+          <Pressable testID="pick-avatar" accessibilityRole="button" accessibilityLabel={t("editProfile.changePhoto")} onPress={() => pickAvatar("library")} style={styles.avatarWrap}>
             {uploading ? <ActivityIndicator color={colors.brandPrimary} /> : <Avatar uri={avatar} name={name} size={96} />}
             <View style={camBadgeStyle}>
               <Camera size={16} color={colors.onBrandPrimary} weight="fill" />

@@ -65,7 +65,8 @@
     "genreCount_other": "{{count}} generi",
     "inCommon": "{{count}} in comune",
     "genresInCommon_one": "{{count}} genere in comune",
-    "genresInCommon_other": "{{count}} generi in comune"
+    "genresInCommon_other": "{{count}} generi in comune",
+    "deletedReader": "Lettore eliminato"
   },
   "languageSelect": {
     "switching": "Cambio della lingua…",
@@ -77,7 +78,7 @@
     "current": "Lingua attuale"
   },
   "appearance": {
-    "title": "Aspetto",
+    "title": "Tema",
     "subtitle": "Scegli come appare BookLoop. Puoi cambiarlo in qualsiasi momento.",
     "system": "Sistema",
     "systemHint": "Usa le impostazioni del dispositivo",
@@ -175,7 +176,10 @@
     "language": "Lingua",
     "exchangingOnly": "Solo chi scambia ora",
     "exchangingOnlyHint": "Mostra le persone pronte a scambiare subito",
-    "showResults": "Mostra risultati"
+    "showResults": "Mostra risultati",
+    "inArea": "Lettori a {{area}}",
+    "areaDistanceHint": "Stai vedendo tutti i lettori di {{area}}. Scegli una distanza per cercare vicino a te.",
+    "clearArea": "Torna ai lettori vicini"
   },
   "map": {
     "densityTitle": "Densità di scambiatori attivi",
@@ -229,6 +233,7 @@
     "hiddenFromDiscovery": "Nascosto dalla scoperta",
     "inviteTitle": "Invita amici",
     "inviteBody": "Porta il tuo gruppo di lettura nel loop locale",
+    "inviteMessage": "📚 Unisciti a me su BookLoop — scopri lettori vicino a te e scambia libri nella tua zona. Porta anche il tuo gruppo di lettura!",
     "shareInvite": "Condividi invito",
     "swapBadges": "Badge degli scambi",
     "myWishlist": "La mia lista dei desideri",
@@ -241,8 +246,10 @@
     "addBook": "Aggiungi un libro",
     "reviewsCount_one": "{{count}} recensione",
     "reviewsCount_other": "{{count}} recensioni",
-    "swapsDone": "scambi completati",
-    "booksCount": "libri",
+    "swapsDone_one": "scambio",
+    "swapsDone_other": "scambi",
+    "booksCount_one": "libro",
+    "booksCount_other": "libri",
     "editProfile": "Modifica profilo",
     "nowExchanging": "Ora stai scambiando",
     "exchangingPaused": "Scambi in pausa",
@@ -250,7 +257,8 @@
     "couldNotUpdateExchangeStatus": "Impossibile aggiornare lo stato di scambio",
     "inviteCopied": "Link di invito copiato",
     "notAcceptingExchanges": "Nessun nuovo scambio — le chat esistenti restano aperte",
-    "receivedReviews": "Recensioni ricevute"
+    "receivedReviews": "Recensioni ricevute",
+    "logout": "Esci"
   },
   "person": {
     "title": "Profilo",
@@ -338,7 +346,9 @@
       "completed": "Scambio completato! Lascia una valutazione.",
       "badgeUnlocked": "🏅 {{name}} ha sbloccato il badge {{badge}}!",
       "photo": "📷 Foto",
-      "chatAccepted": "{{name}} ha accettato la richiesta. Ora potete chattare."
+      "chatAccepted": "{{name}} ha accettato la richiesta. Ora potete chattare.",
+      "closed": "Questo scambio è stato chiuso.",
+      "accountDeleted": "Questo lettore ha eliminato il suo account."
     },
     "proposalTitle": "Proposta di scambio",
     "decline": "Rifiuta",
@@ -378,7 +388,9 @@
     "acceptSwap": "Accetta lo scambio",
     "acceptToChat": "Accetta per chattare",
     "send": "Invia",
-    "sendPhoto": "Invia una foto"
+    "sendPhoto": "Invia una foto",
+    "photoLabel": "Foto",
+    "photoRemoved": "Foto rimossa"
   },
   "reviews": {
     "title": "Recensioni",
@@ -389,7 +401,9 @@
     "bookLoopMember": "Membro di BookLoop",
     "postAnonymously": "Pubblica in forma anonima",
     "anonymousOffHint": "Il tuo nome e la tua foto saranno mostrati con la recensione",
-    "anonymousOnHint": "Mostrata come “Membro di BookLoop” — nessuno vedrà chi l’ha scritta"
+    "anonymousOnHint": "Mostrata come “Membro di BookLoop” — nessuno vedrà chi l’ha scritta",
+    "starsLabel_one": "{{count}} stella",
+    "starsLabel_other": "{{count}} stelle"
   },
   "wishlist": {
     "title": "Lista dei desideri",
@@ -427,7 +441,8 @@
     "permissionNeeded": "Permesso necessario",
     "uploadFailed": "Caricamento non riuscito",
     "profileUpdated": "Profilo aggiornato",
-    "couldNotSave": "Impossibile salvare"
+    "couldNotSave": "Impossibile salvare",
+    "changePhoto": "Cambia foto profilo"
   },
   "badges": {
     "names": {
@@ -491,7 +506,7 @@
     "noResultsHint": "Prova a modificare i filtri."
   },
   "location": {
-    "within100m": "Entro 100 m",
+    "within1km": "Entro 1 km",
     "notSet": "Posizione non impostata",
     "detected": "Posizione rilevata",
     "locating": "Rilevamento della posizione…",
@@ -596,7 +611,12 @@
     "onlyRecipient": "Solo chi ha ricevuto la richiesta può accettarla",
     "cannotFavoriteSelf": "Non puoi aggiungere te stesso ai preferiti",
     "chooseBothBooks": "Scegli entrambi i libri, o nessuno",
-    "invalidPushToken": "Impossibile registrare questo dispositivo per le notifiche"
+    "invalidPushToken": "Impossibile registrare questo dispositivo per le notifiche",
+    "blocked": "Non puoi interagire con questo lettore.",
+    "cannotBlockSelf": "Non puoi bloccare te stesso.",
+    "invalidImageUrl": "Carica l’immagine tramite BookLoop.",
+    "unsupportedImage": "Carica un’immagine JPEG, PNG o WebP.",
+    "tooManySignInAttempts": "Troppi tentativi di accesso. Riprova tra qualche minuto."
   },
   "proposal": {
     "title": "Nuova proposta",
@@ -672,6 +692,49 @@
     "errorInUse": "Quell’account è già collegato a un altro profilo BookLoop",
     "errorAlreadyLinked": "È già collegato un altro account di questo servizio — scollegalo prima",
     "errorLastMethod": "È il tuo unico modo di accedere, quindi non può essere rimosso",
-    "lastMethodHint": "Resta sempre almeno un modo per accedere."
+    "lastMethodHint": "Resta sempre almeno un modo per accedere.",
+    "deleteTitle": "Elimina account",
+    "deleteBody": "Elimina definitivamente profilo, libri, foto, preferiti e le recensioni che hai ricevuto. Le recensioni che hai scritto restano senza il tuo nome e i lettori con cui hai scambiato conservano le conversazioni senza il tuo nome. L’operazione non può essere annullata.",
+    "deleteButton": "Elimina il mio account",
+    "deleteConfirmTitle": "Eliminare il tuo account?",
+    "deleteConfirmBody": "Profilo, libri e foto verranno eliminati definitivamente e gli scambi aperti verranno chiusi. L’operazione non può essere annullata.",
+    "deleted": "Il tuo account è stato eliminato",
+    "deleteFailed": "Impossibile eliminare l’account. Riprova."
+  },
+  "safety": {
+    "moreActions": "Altre azioni",
+    "reportTitle": {
+      "user": "Segnala lettore",
+      "book": "Segnala annuncio",
+      "review": "Segnala recensione",
+      "message": "Segnala messaggio",
+      "swap": "Segnala scambio"
+    },
+    "reasonPrompt": "Qual è il problema?",
+    "reasons": {
+      "spam": "Spam",
+      "harassment": "Molestie o bullismo",
+      "inappropriate": "Contenuti inappropriati",
+      "fraud": "Truffa o annuncio falso",
+      "safety": "Problema di sicurezza",
+      "other": "Altro"
+    },
+    "detailsPlaceholder": "Aggiungi dettagli (facoltativo)",
+    "reportPrivacy": "Le segnalazioni vengono esaminate dal team di BookLoop. Al lettore non viene detto chi l’ha segnalato.",
+    "sendReport": "Invia segnalazione",
+    "reportSent": "Grazie — segnalazione inviata",
+    "reportFailed": "Impossibile inviare la segnalazione. Riprova.",
+    "block": "Blocca",
+    "blockName": "Blocca {{name}}",
+    "blockTitle": "Bloccare {{name}}?",
+    "blockBody": "Non vi vedrete più in Scopri né sulla mappa, e nessuno dei due potrà scrivere o proporre scambi. Gli scambi aperti tra voi verranno chiusi. Puoi sbloccare dalle Impostazioni.",
+    "blockedToast": "{{name}} è stato bloccato",
+    "blockFailed": "Qualcosa è andato storto. Riprova.",
+    "blockedReaders": "Lettori bloccati",
+    "blockedHint": "I lettori bloccati non possono vedere il tuo profilo o i tuoi libri, né scriverti.",
+    "noBlocked": "Non hai bloccato nessuno",
+    "unblock": "Sblocca",
+    "unblockName": "Sblocca {{name}}",
+    "unblockedToast": "{{name}} è stato sbloccato"
   }
 }

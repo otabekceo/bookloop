@@ -400,7 +400,8 @@ class TestPushOptIn:
         kinds = [p["kind"] for p in self._pushes(b)]
         assert "message" in kinds
         msg = next(p for p in self._pushes(b) if p["kind"] == "message")
-        assert msg["to"] == token and msg["body"] == "after completion" and msg["data"]["url"] == f"/swap/{sid}"
+        # Private: the push names the sender but never carries the message (see TestChatPushPrivacy).
+        assert msg["to"] == token and "after completion" not in str(msg) and msg["data"]["url"] == f"/swap/{sid}"
         # Turning it off stops pushes (unread state is unaffected).
         requests.put(f"{API}/users/me", json={"notifications_enabled": False}, headers=_h(b))
         before = len(self._pushes(b))
@@ -422,6 +423,109 @@ class TestPushOptIn:
         assert _db().push_tokens.find_one({"token": token})["user_id"] == b["id"]
         assert _post(b, "/push/unregister", {"token": token}).status_code == 200
         assert _db().push_tokens.find_one({"token": token}) is None
+
+
+class TestChatPushPrivacy:
+    """Chat pushes reach lock screens and third-party push services (Expo, FCM/APNs): they say who wrote,
+    in the RECIPIENT's language, and nothing about what was written."""
+    SECRET = "my flat is 12B, door code 4471"
+    EXPECTED = {
+        "en": "You have a new message from {name}",
+        "uz": "{name}dan sizga yangi xabar keldi",
+        "ru": "У вас новое сообщение от {name}",
+        "it": "Hai un nuovo messaggio da {name}",
+        "ar": "لديك رسالة جديدة من {name}",
+    }
+
+    def _opt_in(self, u, lang=None):
+        token = "ExponentPushToken[" + uuid.uuid4().hex[:22] + "]"
+        assert _post(u, "/push/register", {"token": token, "platform": "ios"}).status_code == 200
+        body = {"notifications_enabled": True, **({"preferred_language": lang} if lang else {})}
+        assert requests.put(f"{API}/users/me", json=body, headers=_h(u)).status_code == 200
+        return token
+
+    def _pushes(self, u, kind=None):
+        return [p for p in _db().push_debug.find({"user_id": u["id"]}, {"_id": 0, "created_at": 0})
+                if kind is None or p["kind"] == kind]
+
+    def _open_chat(self):
+        a, b = _user("Sender"), _user("Receiver")
+        sid = _proposal(a, b)
+        assert _post(b, f"/swaps/{sid}/allow-chat").status_code == 200
+        return a, b, sid
+
+    def test_message_push_has_no_content_anywhere_and_routes_to_the_chat(self):
+        a, b, sid = self._open_chat()
+        token = self._opt_in(b)
+        assert _say(a, sid, self.SECRET).status_code == 200
+        [p] = self._pushes(b, "message")
+        assert p["title"] == "BookLoop"
+        assert p["body"] == f"You have a new message from {a['name']}"  # the sender's name may appear
+        # Not in title, body, data, nor any other field of the payload.
+        assert self.SECRET not in str(p) and "4471" not in str(p)
+        # Only what the app needs to open (and not double-notify inside) the conversation.
+        assert p["data"] == {"swap_id": sid, "type": "message", "url": f"/swap/{sid}"}
+        assert p["to"] == token
+        assert set(p) == {"to", "title", "body", "sound", "data", "channelId", "user_id", "kind"}
+        # The recipient still reads the message in the authenticated chat.
+        msgs = _detail(b, sid)["messages"]
+        assert any(m.get("text") == self.SECRET for m in msgs)
+
+    def test_photo_message_push_does_not_reveal_it_is_a_photo(self):
+        a, b, sid = self._open_chat()
+        self._opt_in(b)
+        png = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15"
+               b"\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\x00\x00\x00\x03\x00\x01\x5e\xf3\x2a\xea\x00\x00"
+               b"\x00\x00IEND\xaeB`\x82")
+        up = requests.post(f"{API}/upload", files={"file": ("p.png", png, "image/png")}, headers=_h(a))
+        assert up.status_code == 200, up.text
+        assert _post(a, f"/swaps/{sid}/messages", {"image_url": up.json()["url"]}).status_code == 200
+        [p] = self._pushes(b, "message")
+        assert p["body"] == f"You have a new message from {a['name']}"
+        assert "/api/files" not in str(p) and "📷" not in str(p)
+
+    def test_each_language_uses_the_recipients_language_not_the_senders(self):
+        for lang, text in self.EXPECTED.items():
+            a, b, sid = self._open_chat()
+            requests.put(f"{API}/users/me", json={"preferred_language": "en" if lang != "en" else "ru"}, headers=_h(a))
+            self._opt_in(b, lang)
+            _say(a, sid, self.SECRET)
+            [p] = self._pushes(b, "message")
+            assert p["title"] == "BookLoop", lang
+            assert p["body"] == text.format(name=a["name"]), lang
+            assert self.SECRET not in str(p), lang
+
+    def test_changing_the_recipients_language_changes_the_push(self):
+        a, b, sid = self._open_chat()
+        self._opt_in(b, "en")
+        _say(a, sid, "one")
+        requests.put(f"{API}/users/me", json={"preferred_language": "ar"}, headers=_h(b))
+        _say(a, sid, "two")
+        first, second = self._pushes(b, "message")
+        assert first["body"] == self.EXPECTED["en"].format(name=a["name"])
+        assert second["body"] == self.EXPECTED["ar"].format(name=a["name"])
+
+    def test_sender_name_is_one_plain_line(self):
+        a, b, sid = self._open_chat()
+        r = requests.put(f"{API}/users/me", json={"name": "Eve\nYour account is suspended  {name}"}, headers=_h(a))
+        assert r.status_code == 200
+        self._opt_in(b)
+        _say(a, sid, self.SECRET)
+        [p] = self._pushes(b, "message")
+        assert "\n" not in p["body"]
+        assert p["body"] == "You have a new message from Eve Your account is suspended {name}"  # braces literal
+
+    def test_event_pushes_still_describe_the_event(self):
+        a, b = _user("A"), _user("B")
+        self._opt_in(b, "it")
+        self._opt_in(a, "ru")
+        sid = _proposal(a, b)
+        [received] = self._pushes(b, "proposal_received")
+        assert received["title"] == f"Nuova proposta di scambio da {a['name']}" and received["body"] == ""
+        assert received["data"] == {"swap_id": sid, "type": "proposal_received", "url": f"/swap/{sid}"}
+        assert _post(b, f"/swaps/{sid}/allow-chat").status_code == 200
+        [accepted] = self._pushes(a, "chat_accepted")
+        assert accepted["title"].startswith(b["name"]) and "переписываться" in accepted["title"]
 
 
 # ---------------------------------------------------------------- J/K/L: favorites + ownership

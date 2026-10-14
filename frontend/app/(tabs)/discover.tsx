@@ -1,10 +1,10 @@
 import { useRef, useState, useMemo, useCallback, useEffect } from "react";
 import { View, FlatList, ScrollView, useWindowDimensions, Pressable, RefreshControl, ActivityIndicator, Keyboard } from "react-native";
-import { useRouter, useNavigation } from "expo-router";
+import { useRouter, useNavigation, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 import BottomSheet, { BottomSheetBackdrop, BottomSheetView } from "@gorhom/bottom-sheet";
-import { MagnifyingGlass, SlidersHorizontal, Bell, BookOpen, Sparkle, ArrowRight, Heart } from "phosphor-react-native";
+import { MagnifyingGlass, SlidersHorizontal, Bell, BookOpen, Sparkle, ArrowRight, Heart, MapPin, X } from "phosphor-react-native";
 
 import { AppText, Chip, ChipRow, Field, Button, EmptyState, DirectionalIcon, haptic, useDirectionalStyle } from "@/src/components/ui";
 import { Logo } from "@/src/components/Logo";
@@ -14,7 +14,8 @@ import { apiFetch } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useDeviceLocation } from "@/src/location";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
-import { GENRES, LANGUAGES, DISTANCES } from "@/src/constants";
+import { GENRES, LANGUAGES } from "@/src/constants";
+import { DEFAULT_DISTANCE, DISTANCE_ALL, DISTANCE_OPTIONS, areaScopeFromParams, peopleQueryString, type DistanceFilter } from "@/src/discoverFilters";
 import { enumLabel } from "@/src/i18n/enums";
 import { makeStyles, useTheme } from "@/src/theme";
 import { fontsForLanguage } from "@/src/typography";
@@ -40,7 +41,7 @@ export default function Discover() {
   const [search, setSearch] = useState("");
   const [genre, setGenre] = useState("All");
   const [language, setLanguage] = useState("All");
-  const [maxDistance, setMaxDistance] = useState(25);
+  const [maxDistance, setMaxDistance] = useState<DistanceFilter>(DEFAULT_DISTANCE);
   const [exchangingOnly, setExchangingOnly] = useState(true);
 
   const sheetRef = useRef<BottomSheet>(null);
@@ -48,25 +49,40 @@ export default function Discover() {
   const booksListRef = useRef<FlatList>(null);
   const navigation = useNavigation();
 
+  // "Explore people" on a map cluster opens Discover scoped to that area (route params). The area
+  // replaces the distance filter — it can be far beyond any radius — and stays until the reader
+  // clears it, picks a distance, or taps the Discover tab.
+  const params = useLocalSearchParams<{ cluster?: string; area?: string }>();
+  const scope = areaScopeFromParams(params);
+  const clearScope = useCallback(() => navigation.setParams({ cluster: undefined, area: undefined } as never), [navigation]);
+  // Arriving from a map area always shows its people (adjusted during render, not in an effect).
+  const [seenCluster, setSeenCluster] = useState(scope?.cluster);
+  if (seenCluster !== scope?.cluster) {
+    setSeenCluster(scope?.cluster);
+    if (scope) setTab("people");
+  }
+
   // Tapping the Discover tab while already on Discover returns to the main Discover view: clears the
   // search and filters, closes the filter sheet and keyboard, and scrolls back to the top. This is
   // screen state, not navigation history, so nothing is pushed or stacked.
   useEffect(() => {
     const unsubscribe = navigation.addListener("tabPress" as any, () => {
+      // Pressing the tab is a request for normal Discover, so a map area never lingers behind it.
+      clearScope();
       if (!navigation.isFocused()) return;
       Keyboard.dismiss();
       sheetRef.current?.close();
       setSearch("");
       setGenre("All");
       setLanguage("All");
-      setMaxDistance(25);
+      setMaxDistance(DEFAULT_DISTANCE);
       setExchangingOnly(true);
       setTab("people");
       peopleListRef.current?.scrollToOffset({ offset: 0, animated: true });
       booksListRef.current?.scrollToOffset({ offset: 0, animated: true });
     });
     return unsubscribe;
-  }, [navigation]);
+  }, [navigation, clearScope]);
 
   // Same query (and cache) the tab bar polls: unread messages (completed swaps included) + unread events.
   const { data: notif } = useQuery({
@@ -75,11 +91,11 @@ export default function Discover() {
   });
 
   const peopleQ = useQuery({
-    queryKey: ["people", search, genre, language, maxDistance, exchangingOnly],
+    queryKey: ["people", search, genre, language, maxDistance, exchangingOnly, scope?.cluster ?? null],
     enabled: tab === "people",
     queryFn: () =>
       apiFetch<{ people: Person[]; top_matches: Person[] }>(
-        `/api/discover/people?search=${encodeURIComponent(search)}&genre=${genre}&language=${language}&max_distance=${maxDistance}&exchanging=${exchangingOnly}`,
+        `/api/discover/people?${peopleQueryString({ search, genre, language, maxDistance, exchangingOnly, scope })}`,
       ),
   });
 
@@ -106,8 +122,31 @@ export default function Discover() {
   const people = peopleQ.data?.people || [];
   const books = booksQ.data?.books || [];
   const topMatches = peopleQ.data?.top_matches || [];
-  const showMatches = !search && genre === "All";
+  const showMatches = !search && genre === "All" && !scope;
   const hasGenres = (user?.genres?.length || 0) > 0;
+
+  const AreaBanner = scope ? (
+    <View style={styles.areaBanner} testID="discover-area-scope">
+      <MapPin size={18} color={colors.brandPrimary} weight="fill" />
+      <AppText variant="label" style={{ flex: 1 }} numberOfLines={2}>
+        {t("discover.inArea", { area: scope.area })}
+      </AppText>
+      <Pressable
+        testID="discover-area-clear"
+        onPress={() => {
+          haptic("selection");
+          clearScope();
+        }}
+        hitSlop={8}
+        style={styles.areaClear}
+        accessibilityRole="button"
+        accessibilityLabel={t("discover.clearArea")}
+      >
+        <X size={14} color={colors.onSurface} weight="bold" />
+        <AppText variant="caption">{t("common.clear")}</AppText>
+      </Pressable>
+    </View>
+  ) : null;
 
   // Distances need the reader's own location. No prompt on open: the card asks only when tapped.
   const LocationBanner = !location.hasLocation ? (
@@ -199,7 +238,7 @@ export default function Discover() {
               containerStyle={styles.searchField}
             />
           </View>
-          <Pressable testID="filter-button" onPress={openFilters} style={styles.filterBtn}>
+          <Pressable testID="filter-button" accessibilityRole="button" accessibilityLabel={t("common.filters")} onPress={openFilters} style={styles.filterBtn}>
             <SlidersHorizontal size={20} color={colors.onBrandPrimary} />
           </Pressable>
         </View>
@@ -249,6 +288,7 @@ export default function Discover() {
           renderItem={({ item }) => <PersonCard person={item} />}
           ListHeaderComponent={
             <>
+              {AreaBanner}
               {LocationBanner}
               {MatchesStrip}
             </>
@@ -301,9 +341,25 @@ export default function Discover() {
 
           <View style={{ gap: 10 }}>
             <AppText variant="label">{t("common.distance")}</AppText>
+            {scope && (
+              <AppText variant="caption" color={colors.muted} testID="distance-area-hint">
+                {t("discover.areaDistanceHint", { area: scope.area })}
+              </AppText>
+            )}
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {DISTANCES.map((d) => (
-                <Chip key={d} label={`${d} km`} selected={maxDistance === d} onPress={() => setMaxDistance(d)} testID={`distance-${d}`} />
+              {DISTANCE_OPTIONS.map((d) => (
+                <Chip
+                  key={d}
+                  label={d === DISTANCE_ALL ? t("common.all") : `${d} km`}
+                  // Under a map area no radius applies, so none is shown as selected.
+                  selected={!scope && maxDistance === d}
+                  onPress={() => {
+                    setMaxDistance(d);
+                    // Choosing a distance means "search around me" again.
+                    if (scope) clearScope();
+                  }}
+                  testID={`distance-${d}`}
+                />
               ))}
             </View>
           </View>
@@ -370,5 +426,7 @@ const useStyles = makeStyles((colors) => ({
   knobOn: { alignSelf: "flex-end" },
   matches: { marginBottom: 4 },
   matchesHead: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 },
+  areaBanner: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.brandTertiary, borderRadius: 16, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 14 },
+  areaClear: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: colors.surfaceSecondary, borderRadius: 999, paddingVertical: 6, paddingHorizontal: 10 },
   setupCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.brandTertiary, borderRadius: 16, padding: 14, marginBottom: 4 },
 }));

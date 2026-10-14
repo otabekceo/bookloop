@@ -11,7 +11,8 @@ import { AppText, Button, Field, useToast, haptic } from "@/src/components/ui";
 import { Logo } from "@/src/components/Logo";
 import { useAuth } from "@/src/auth";
 import { apiFetch } from "@/src/api";
-import { appleAvailable } from "@/src/socialAuth";
+import { appleAvailable, googleNativeAvailable } from "@/src/socialAuth";
+import { googleErrorKey } from "@/src/googleNative";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
 import { makeStyles, useTheme } from "@/src/theme";
 import { fontsForLanguage } from "@/src/typography";
@@ -32,7 +33,7 @@ export default function Login() {
   const { colors, scheme } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { login, requestOtp, loginWithGoogle, loginWithApple, googleError, clearGoogleError } = useAuth();
+  const { login, requestOtp, loginWithGoogle, loginWithGoogleNative, loginWithApple, googleError, clearGoogleError } = useAuth();
   const { t, language: uiLanguage } = useLanguage();
   const uiFonts = fontsForLanguage(uiLanguage);
   const toast = useToast();
@@ -44,15 +45,19 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   // Show the Google / Apple buttons only when the backend has that provider configured (and, for
-  // Apple, only on an Apple device that supports it).
+  // Apple, only on an Apple device that supports it). On Android, Google uses the native account sheet
+  // when the backend has native sign-in on and this build is set up for it; otherwise the browser flow.
   const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [googleNative, setGoogleNative] = useState(false);
   const [appleEnabled, setAppleEnabled] = useState(false);
   useEffect(() => {
     let live = true;
-    apiFetch<{ google: boolean; apple?: boolean }>("/api/auth/providers")
+    apiFetch<{ google: boolean; google_native?: boolean; apple?: boolean }>("/api/auth/providers")
       .then(async (p) => {
         if (!live) return;
-        setGoogleEnabled(!!p.google);
+        const native = googleNativeAvailable(!!p.google_native);
+        setGoogleNative(native);
+        setGoogleEnabled(!!p.google || native);
         const apple = await appleAvailable(!!p.apple);
         if (live) setAppleEnabled(apple);
       })
@@ -105,9 +110,15 @@ export default function Login() {
 
   const google = async () => {
     try {
-      await loginWithGoogle();
-    } catch {
-      toast(t("auth.googleFailed"), "error");
+      if (googleNative) {
+        if (await loginWithGoogleNative()) haptic("success");
+      } else {
+        await loginWithGoogle();
+      }
+    } catch (e: any) {
+      // Refusals the user can act on (sign in with the password first, a different Google account, no
+      // Google account / Play services on the device) get their own message; anything else is generic.
+      toast(t(googleErrorKey(e?.code)), "error");
     }
   };
 

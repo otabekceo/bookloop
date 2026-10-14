@@ -3,6 +3,8 @@ import { useRouter } from "expo-router";
 import { UserCircle } from "phosphor-react-native";
 
 import { AppText, Avatar, Stars } from "@/src/components/ui";
+import { ReportButton } from "@/src/components/Safety";
+import { useAuth } from "@/src/auth";
 import { reviewerView, type PublicReview } from "@/src/reviews";
 import { formatDate } from "@/src/i18n";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
@@ -17,9 +19,12 @@ export function ReviewCard({ review, compact = false }: { review: PublicReview; 
   const { colors } = useTheme();
   const { t, language } = useLanguage();
   const router = useRouter();
+  const { user: me } = useAuth();
   const who = reviewerView(review);
   const size = compact ? 32 : 38;
-  const name = who.anonymous ? t("reviews.bookLoopMember") : who.name;
+  // An identified review without a profile to open was written by an account that has since been deleted.
+  const name = who.anonymous ? t("reviews.bookLoopMember") : who.profileId ? who.name : t("common.deletedReader");
+  const canReport = !!review.id && (!me || review.rater_id !== me.user_id);
 
   const header = (
     <>
@@ -46,13 +51,16 @@ export function ReviewCard({ review, compact = false }: { review: PublicReview; 
 
   return (
     <View testID={who.anonymous ? "review-anonymous" : "review-identified"} style={styles.card}>
-      {!who.anonymous && who.profileId ? (
-        <Pressable onPress={() => router.push(`/person/${who.profileId}`)} style={styles.head} accessibilityRole="button" accessibilityLabel={name}>
-          {header}
-        </Pressable>
-      ) : (
-        <View style={styles.head}>{header}</View>
-      )}
+      <View style={styles.headRow}>
+        {!who.anonymous && who.profileId ? (
+          <Pressable onPress={() => router.push(`/person/${who.profileId}`)} style={[styles.head, { flex: 1 }]} accessibilityRole="button" accessibilityLabel={name}>
+            {header}
+          </Pressable>
+        ) : (
+          <View style={[styles.head, { flex: 1 }]}>{header}</View>
+        )}
+        {canReport ? <ReportButton target={{ type: "review", id: review.id }} size={16} style={styles.report} /> : null}
+      </View>
       {review.review ? (
         <AppText variant="body" color={compact ? colors.muted : colors.onSurface}>
           {review.review}
@@ -65,5 +73,8 @@ export function ReviewCard({ review, compact = false }: { review: PublicReview; 
 const useStyles = makeStyles((colors) => ({
   card: { backgroundColor: colors.surfaceSecondary, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.border, gap: 8 },
   head: { flexDirection: "row", alignItems: "center", gap: 10 },
+  headRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  // 44 pt touch target around a small icon.
+  report: { width: 44, height: 44, alignItems: "center", justifyContent: "center", marginEnd: -10 },
   anonAvatar: { backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center" },
 }));

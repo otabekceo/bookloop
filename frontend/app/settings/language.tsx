@@ -55,6 +55,8 @@ export default function LanguageSettings() {
         <AppText variant="heading">{t("languageSelect.changeTitle")}</AppText>
         <Pressable
           testID="language-close"
+          accessibilityRole="button"
+          accessibilityLabel={t("common.close")}
           onPress={() => router.back()}
           hitSlop={10}
           style={styles.closeBtn}

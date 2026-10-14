@@ -57,3 +57,33 @@ export function createLanguageSwitcher(deps: SwitchDeps, safetyMs = 5000) {
     return true;
   };
 }
+
+/**
+ * Returns `previewLanguage(code)` for the first-run picker: makes `code` the ACTIVE language right away
+ * (so the whole screen re-renders in it) without saving it — saving is Continue's job (switchLanguage).
+ *  - Applies run one at a time; when taps come faster than an apply finishes, only the newest language
+ *    is applied next, so the last tap always wins and an older apply can never land after it.
+ *  - Never persists, never touches the native direction and never reloads: the visible layout direction
+ *    follows the active language through the root `direction` style.
+ */
+export function createLanguagePreview(apply: (code: string) => Promise<void>) {
+  let latest: string | null = null;
+  let running: Promise<void> | null = null;
+
+  return function previewLanguage(code: string): Promise<void> {
+    latest = code;
+    if (running) return running; // the loop below picks up the newest value
+    running = (async () => {
+      try {
+        let applied: string | null;
+        do {
+          applied = latest;
+          await apply(applied!);
+        } while (latest !== applied);
+      } finally {
+        running = null;
+      }
+    })();
+    return running;
+  };
+}

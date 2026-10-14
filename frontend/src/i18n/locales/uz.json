@@ -65,7 +65,8 @@
     "genreCount_other": "{{count}} janr",
     "inCommon": "{{count}} umumiy",
     "genresInCommon_one": "{{count}} umumiy janr",
-    "genresInCommon_other": "{{count}} umumiy janr"
+    "genresInCommon_other": "{{count}} umumiy janr",
+    "deletedReader": "O‘chirilgan kitobxon"
   },
   "languageSelect": {
     "title": "Iltimos, tilni tanlang",
@@ -94,6 +95,9 @@
     "fillAllFields": "Iltimos, barcha maydonlarni to'ldiring",
     "somethingWentWrong": "Xatolik yuz berdi",
     "googleFailed": "Google orqali kirish amalga oshmadi",
+    "googleLinkRequired": "Bu email bilan BookLoop hisobi allaqachon mavjud. Parolingiz bilan kiring, so‘ng Profil → Hisob bo‘limida Google’ni ulang.",
+    "googleAccountMismatch": "Bu BookLoop hisobi boshqa Google hisobiga ulangan.",
+    "googleUnavailable": "Bu qurilmada Google orqali kirish mavjud emas. Google Play xizmatlari yangilanganini va Google hisobi qo‘shilganini tekshiring.",
     "continue": "Davom etish",
     "emailAlreadyRegistered": "Bu email bilan hisob allaqachon mavjud",
     "stepAccount": "Hisob",
@@ -127,7 +131,10 @@
     "language": "Til",
     "exchangingOnly": "Faqat hozir almashayotganlar",
     "exchangingOnlyHint": "Hozir almashishga tayyor odamlarni ko'rsatish",
-    "showResults": "Natijalarni ko'rsatish"
+    "showResults": "Natijalarni ko'rsatish",
+    "inArea": "{{area}} kitobxonlari",
+    "areaDistanceHint": "{{area}} hududidagi barcha kitobxonlar ko'rsatilmoqda. Yaqiningizdan qidirish uchun masofani tanlang.",
+    "clearArea": "Yaqin atrofdagi kitobxonlarga qaytish"
   },
   "map": {
     "densityTitle": "Faol almashuvchilar zichligi",
@@ -181,6 +188,7 @@
     "hiddenFromDiscovery": "Kashf etishdan yashirilgan",
     "inviteTitle": "Do'stlarni taklif qiling",
     "inviteBody": "Kitobxonlar guruhingizni mahalliy davraga olib keling",
+    "inviteMessage": "📚 BookLoop’ga qo‘shiling — yaqiningizdagi kitobxonlarni toping va kitoblarni o‘zingiz yashaydigan joyda almashing. Kitobxonlar davrangizni ham taklif qiling!",
     "shareInvite": "Taklifni ulashish",
     "swapBadges": "Almashuv nishonlari",
     "myWishlist": "Istaklar ro'yxatim",
@@ -193,8 +201,10 @@
     "addBook": "Kitob qo'shish",
     "reviewsCount_one": "{{count}} sharh",
     "reviewsCount_other": "{{count}} sharh",
-    "swapsDone": "almashuv bajarildi",
-    "booksCount": "kitob",
+    "swapsDone_one": "almashuv",
+    "swapsDone_other": "almashuv",
+    "booksCount_one": "kitob",
+    "booksCount_other": "kitob",
     "editProfile": "Profilni tahrirlash",
     "nowExchanging": "Endi almashmoqdasiz",
     "exchangingPaused": "Almashuv to'xtatildi",
@@ -202,7 +212,8 @@
     "inviteCopied": "Taklif havolasi nusxalandi",
     "couldNotUpdateExchangeStatus": "Almashuv holatini yangilab bo'lmadi",
     "notAcceptingExchanges": "Yangi almashuvlar qabul qilinmaydi — mavjud chatlar ochiq qoladi",
-    "receivedReviews": "Siz olgan sharhlar"
+    "receivedReviews": "Siz olgan sharhlar",
+    "logout": "Chiqish"
   },
   "person": {
     "title": "Profil",
@@ -290,7 +301,9 @@
       "completed": "Almashuv yakunlandi! Baho qoldiring.",
       "badgeUnlocked": "🏅 {{name}} «{{badge}}» nishonini ochdi!",
       "photo": "📷 Rasm",
-      "chatAccepted": "{{name}} so‘rovni qabul qildi. Endi yozishishingiz mumkin."
+      "chatAccepted": "{{name}} so‘rovni qabul qildi. Endi yozishishingiz mumkin.",
+      "closed": "Bu almashuv yopildi.",
+      "accountDeleted": "Bu kitobxon hisobini o‘chirdi."
     },
     "proposalTitle": "Almashuv taklifi",
     "decline": "Rad etish",
@@ -330,7 +343,9 @@
     "acceptSwap": "Almashuvni qabul qilish",
     "acceptToChat": "Suhbatni davom ettirish uchun qabul qilish",
     "send": "Yuborish",
-    "sendPhoto": "Rasm yuborish"
+    "sendPhoto": "Rasm yuborish",
+    "photoLabel": "Rasm",
+    "photoRemoved": "Rasm o‘chirildi"
   },
   "reviews": {
     "title": "Sharhlar",
@@ -341,7 +356,9 @@
     "bookLoopMember": "BookLoop a’zosi",
     "postAnonymously": "Anonim tarzda joylash",
     "anonymousOffHint": "Sharh bilan ismingiz va rasmingiz ko‘rsatiladi",
-    "anonymousOnHint": "“BookLoop a’zosi” sifatida ko‘rsatiladi — kim yozgani ko‘rinmaydi"
+    "anonymousOnHint": "“BookLoop a’zosi” sifatida ko‘rsatiladi — kim yozgani ko‘rinmaydi",
+    "starsLabel_one": "{{count}} yulduz",
+    "starsLabel_other": "{{count}} yulduz"
   },
   "wishlist": {
     "title": "Istaklar ro'yxati",
@@ -379,7 +396,8 @@
     "permissionNeeded": "Ruxsat kerak",
     "uploadFailed": "Yuklash amalga oshmadi",
     "profileUpdated": "Profil yangilandi",
-    "couldNotSave": "Saqlab bo'lmadi"
+    "couldNotSave": "Saqlab bo'lmadi",
+    "changePhoto": "Profil rasmini o‘zgartirish"
   },
   "badges": {
     "names": {
@@ -443,7 +461,7 @@
     "noResultsHint": "Filtrlarni o'zgartirib ko'ring."
   },
   "location": {
-    "within100m": "100 m ichida",
+    "within1km": "1 km ichida",
     "notSet": "Joylashuv aniqlanmagan",
     "detected": "Joylashuv aniqlandi",
     "locating": "Joylashuvingiz aniqlanmoqda…",
@@ -596,7 +614,12 @@
     "onlyRecipient": "So‘rovni faqat uni olgan kitobxon qabul qila oladi",
     "cannotFavoriteSelf": "O‘zingizni sevimlilarga qo‘sha olmaysiz",
     "chooseBothBooks": "Ikkala kitobni tanlang yoki hech birini",
-    "invalidPushToken": "Bu qurilmani bildirishnomalar uchun ro‘yxatdan o‘tkazib bo‘lmadi"
+    "invalidPushToken": "Bu qurilmani bildirishnomalar uchun ro‘yxatdan o‘tkazib bo‘lmadi",
+    "blocked": "Bu kitobxon bilan o‘zaro aloqa qila olmaysiz.",
+    "cannotBlockSelf": "O‘zingizni bloklay olmaysiz.",
+    "invalidImageUrl": "Rasmni BookLoop orqali yuklang.",
+    "unsupportedImage": "JPEG, PNG yoki WebP rasm yuklang.",
+    "tooManySignInAttempts": "Kirish urinishlari juda ko‘p. Bir necha daqiqadan so‘ng qayta urinib ko‘ring."
   },
   "proposal": {
     "title": "Yangi taklif",
@@ -672,6 +695,49 @@
     "errorInUse": "Bu hisob boshqa BookLoop profiliga ulangan",
     "errorAlreadyLinked": "Bu provayderning boshqa hisobi allaqachon ulangan — avval uni uzing",
     "errorLastMethod": "Bu yagona kirish usulingiz, uni olib tashlab bo‘lmaydi",
-    "lastMethodHint": "Kamida bitta kirish usuli doim saqlanadi."
+    "lastMethodHint": "Kamida bitta kirish usuli doim saqlanadi.",
+    "deleteTitle": "Hisobni o‘chirish",
+    "deleteBody": "Profilingiz, kitoblaringiz, rasmlaringiz, sevimlilaringiz va sizga yozilgan sharhlar butunlay o‘chiriladi. Siz yozgan sharhlar ismingizsiz qoladi, siz bilan almashgan kitobxonlarda esa yozishmalar ismingiz olib tashlangan holda saqlanadi. Buni qaytarib bo‘lmaydi.",
+    "deleteButton": "Hisobimni o‘chirish",
+    "deleteConfirmTitle": "Hisobingiz o‘chirilsinmi?",
+    "deleteConfirmBody": "Profilingiz, kitoblaringiz va rasmlaringiz butunlay o‘chiriladi, ochiq almashuvlar yopiladi. Buni qaytarib bo‘lmaydi.",
+    "deleted": "Hisobingiz o‘chirildi",
+    "deleteFailed": "Hisobni o‘chirib bo‘lmadi. Qaytadan urinib ko‘ring."
+  },
+  "safety": {
+    "moreActions": "Boshqa amallar",
+    "reportTitle": {
+      "user": "Kitobxon ustidan shikoyat",
+      "book": "E’lon ustidan shikoyat",
+      "review": "Sharh ustidan shikoyat",
+      "message": "Xabar ustidan shikoyat",
+      "swap": "Almashuv ustidan shikoyat"
+    },
+    "reasonPrompt": "Muammo nimada?",
+    "reasons": {
+      "spam": "Spam",
+      "harassment": "Haqorat yoki tazyiq",
+      "inappropriate": "Nomaqbul kontent",
+      "fraud": "Firibgarlik yoki soxta e’lon",
+      "safety": "Xavfsizlik bilan bog‘liq xavotir",
+      "other": "Boshqa sabab"
+    },
+    "detailsPlaceholder": "Tafsilotlar (ixtiyoriy)",
+    "reportPrivacy": "Shikoyatlarni BookLoop jamoasi ko‘rib chiqadi. Kitobxonga kim shikoyat qilgani aytilmaydi.",
+    "sendReport": "Shikoyat yuborish",
+    "reportSent": "Rahmat — shikoyatingiz yuborildi",
+    "reportFailed": "Shikoyatni yuborib bo‘lmadi. Qaytadan urinib ko‘ring.",
+    "block": "Bloklash",
+    "blockName": "{{name}}ni bloklash",
+    "blockTitle": "{{name}} bloklansinmi?",
+    "blockBody": "Siz bir-biringizni Kashf etish bo‘limida va xaritada ko‘rmaysiz, hech biringiz xabar yoki almashuv taklifini yubora olmaysiz. Orangizdagi ochiq almashuvlar yopiladi. Blokdan Sozlamalarda chiqarishingiz mumkin.",
+    "blockedToast": "{{name}} bloklandi",
+    "blockFailed": "Xatolik yuz berdi. Qaytadan urinib ko‘ring.",
+    "blockedReaders": "Bloklangan kitobxonlar",
+    "blockedHint": "Bloklangan kitobxonlar profilingiz va kitoblaringizni ko‘ra olmaydi, sizga xabar yoza olmaydi.",
+    "noBlocked": "Siz hech kimni bloklamagansiz",
+    "unblock": "Blokdan chiqarish",
+    "unblockName": "{{name}}ni blokdan chiqarish",
+    "unblockedToast": "{{name}} blokdan chiqarildi"
   }
 }

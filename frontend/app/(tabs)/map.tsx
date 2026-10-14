@@ -28,6 +28,11 @@ type Cluster = {
   top_genres: string[];
 };
 
+/** "Chilonzor, Tashkent", or just the city when the cluster is a whole city. */
+function areaName(c: Cluster): string {
+  return c.city && c.city !== c.neighborhood ? `${c.neighborhood}, ${c.city}` : c.neighborhood;
+}
+
 export default function MapScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -134,9 +139,7 @@ export default function MapScreen() {
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <MapPin size={18} color={colors.brandSecondary} weight="fill" />
                 <AppText variant="title" style={{ flexShrink: 1 }}>
-                  {selected.city && selected.city !== selected.neighborhood
-                    ? `${selected.neighborhood}, ${selected.city}`
-                    : selected.neighborhood}
+                  {areaName(selected)}
                 </AppText>
               </View>
               <View style={{ flexDirection: "row", gap: 12 }}>
@@ -173,7 +176,12 @@ export default function MapScreen() {
                 }
                 onPress={() => {
                   sheetRef.current?.close();
-                  router.push("/(tabs)/discover");
+                  // Discover lists this area's readers however far away it is (the area replaces the
+                  // distance filter there) instead of the reader's own radius, which hid distant clusters.
+                  router.push({
+                    pathname: "/(tabs)/discover",
+                    params: { cluster: selected.id, area: areaName(selected) },
+                  });
                 }}
               />
             </>

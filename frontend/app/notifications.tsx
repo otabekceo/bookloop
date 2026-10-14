@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BellSimple, ChatCircleDots, ArrowsClockwise, CheckCircle, XCircle, Checks } from "phosphor-react-native";
 
 import { AppText, Avatar, EmptyState, DirectionalIcon, haptic, useToast } from "@/src/components/ui";
+import { displayName } from "@/src/people";
 import { apiFetch } from "@/src/api";
 import { formatDate } from "@/src/i18n";
 import { useLanguage } from "@/src/i18n/LanguageProvider";
@@ -116,12 +117,12 @@ export default function Notifications() {
             const preview = item.kind === "message" ? renderKeyed(t, { key: item.last_message_key, params: item.last_message_params, text: item.last_message }) : "";
             return (
               <Pressable testID={`notification-${item.id}`} onPress={() => openItem(item)} style={[styles.row, unread && styles.rowUnread]}>
-                <Avatar uri={item.actor?.avatar_url} name={item.actor?.name} size={44} />
+                <Avatar uri={item.actor?.avatar_url} name={displayName(t, item.actor)} size={44} />
                 <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     {iconFor(item)}
                     <AppText variant={unread ? "label" : "body"} style={{ flex: 1 }} numberOfLines={2}>
-                      {t(key, params)}
+                      {t(key, { ...params, name: displayName(t, item.actor) })}
                     </AppText>
                   </View>
                   {preview ? (

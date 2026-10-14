@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef } from "react";
 import { View, Pressable, ScrollView } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Check } from "phosphor-react-native";
@@ -16,26 +16,32 @@ import { makeStyles, useTheme } from "@/src/theme";
  * (including the auth screens) renders in their chosen language. The selection
  * is persisted locally and, once the user authenticates, synced to their
  * server profile.
+ *
+ * One source of truth: the ACTIVE language. Tapping a card makes it active at once (previewLanguage), so
+ * the title, subtitle and Continue re-render in it and the highlighted card always matches the text.
+ * Continue only saves that already-active language and finishes the selection; it never changes what is
+ * on screen, so there is no flash of new text before the app moves on.
  */
 export default function LanguageSelect() {
   const styles = useStyles();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { language, setLanguage, isSwitching, t } = useLanguage();
-
-  // Local draft so tapping a card previews the choice before confirming.
-  const [selected, setSelected] = useState<LanguageCode>(language);
+  const { language, setLanguage, previewLanguage, isSwitching, t } = useLanguage();
+  // The newest tap, synchronously: Continue right after a tap confirms that tap, even if its preview
+  // is still being applied.
+  const latest = useRef<LanguageCode>(language);
 
   const choose = (code: LanguageCode) => {
     if (isSwitching) return;
     haptic("selection");
-    setSelected(code);
+    latest.current = code;
+    previewLanguage(code);
   };
 
   const confirm = async () => {
     if (isSwitching) return;
     haptic("success");
-    await setLanguage(selected);
+    await setLanguage(latest.current);
   };
 
   return (
@@ -62,7 +68,7 @@ export default function LanguageSelect() {
 
         <View style={styles.list}>
           {LANGUAGES.map((lang) => {
-            const active = selected === lang.code;
+            const active = language === lang.code;
             return (
               <Pressable
                 key={lang.code}

@@ -3,7 +3,7 @@ import * as ImagePicker from "expo-image-picker";
 
 import { API_BASE as BASE, getToken } from "@/src/api";
 import i18n from "@/src/i18n";
-import { localizeApiError } from "@/src/i18n/apiErrors";
+import { localizeApiError, localizeApiErrorCode } from "@/src/i18n/apiErrors";
 
 export type PickResult = { uri: string } | null;
 
@@ -95,11 +95,13 @@ export function uploadWithProgress(
             reject(new Error(i18n.t("errors.uploadFailed")));
           }
         } else {
-          let detail: string | undefined;
+          let detail: any;
           try {
             detail = JSON.parse(xhr.responseText).detail;
           } catch {}
-          reject(new Error(localizeApiError(typeof detail === "string" ? detail : undefined, xhr.status)));
+          // Coded errors ({ message, code }: unsupported image, upload rate limit) are translated by code.
+          const coded = detail && typeof detail === "object" ? localizeApiErrorCode(detail.code, "/api/upload") : undefined;
+          reject(new Error(coded ?? localizeApiError(typeof detail === "string" ? detail : undefined, xhr.status)));
         }
       };
       xhr.onerror = () => reject(new Error(localizeApiError(undefined, 0)));

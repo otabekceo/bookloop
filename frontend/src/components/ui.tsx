@@ -441,8 +441,8 @@ export function StatusBadge({ status }: { status: string }) {
   const { language, t } = useLanguage();
   const fonts = fontsForLanguage(language);
   const map: Record<string, { bg: string; fg: string }> = {
-    Available: { bg: colors.sageSoft, fg: colors.brandSecondary },
-    Reserved: { bg: colors.brandTertiary, fg: colors.brandPrimary },
+    Available: { bg: colors.sageSoft, fg: colors.brandSecondaryText },
+    Reserved: { bg: colors.accentSoft, fg: colors.accent },
     Swapped: { bg: colors.surfaceTertiary, fg: colors.muted },
   };
   const c = map[status] || map.Available;
@@ -464,7 +464,7 @@ export function ExchangingDot({ active, label }: { active: boolean; label?: bool
         style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: active ? colors.brandSecondary : colors.muted }}
       />
       {label && (
-        <AppText variant="caption" color={active ? colors.brandSecondary : colors.muted}>
+        <AppText variant="caption" color={active ? colors.brandSecondaryText : colors.muted}>
           {active ? t("status.exchanging") : t("status.paused")}
         </AppText>
       )}
@@ -513,6 +513,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toast, setToast] = useState<{ msg: string; kind: ToastKind } | null>(null);
   const timer = useRef<any>(null);
   const styles = useToastStyles();
+  const { colors } = useTheme();
   const show = useCallback((msg: string, kind: ToastKind = "info") => {
     setToast({ msg, kind });
     if (timer.current) clearTimeout(timer.current);
@@ -526,9 +527,15 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         <Animated.View
           entering={FadeInDown} exiting={FadeOutUp}
           pointerEvents="none"
+          accessibilityLiveRegion="polite"
+          accessibilityRole="alert"
           style={[styles.toast, toast.kind === "error" && styles.error, toast.kind === "success" && styles.success]}
         >
-          <AppText variant="label" color="#FFFFFF" style={{ textAlign: "center" }}>
+          <AppText
+            variant="label"
+            color={toast.kind === "error" ? colors.onError : toast.kind === "success" ? colors.onBrandSecondary : colors.onSurfaceInverse}
+            style={{ textAlign: "center" }}
+          >
             {toast.msg}
           </AppText>
         </Animated.View>
